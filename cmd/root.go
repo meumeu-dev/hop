@@ -124,6 +124,10 @@ func runRustdesk(m config.Machine, name string) {
 		fmt.Fprintf(os.Stderr, "Rustdesk non configuré pour '%s'. Utilise: hop add %s rustdesk --id <ID>\n", name, name)
 		os.Exit(1)
 	}
+	if err := config.ValidateRustdeskID(ms.ID); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
 	sh := exec.Command("rustdesk", "--connect", ms.ID)
 	sh.Stdin = os.Stdin
 	sh.Stdout = os.Stdout
@@ -142,7 +146,7 @@ func runRemote(m config.Machine, svc config.Service, name string) {
 	}
 
 	args := sshArgs(target, viaTunnel)
-	args = append(args, "-t", remoteCmd)
+	args = append(args, "-t", "--", remoteCmd)
 	sh := exec.Command("ssh", args...)
 	sh.Stdin = os.Stdin
 	sh.Stdout = os.Stdout

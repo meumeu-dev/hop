@@ -16,7 +16,7 @@ var remoteKey string
 
 var remoteCmd = &cobra.Command{
 	Use:   "remote",
-	Short: "Gère les connexions vers d'autres hop distants",
+	Short: "Gere les connexions vers d'autres hop distants",
 }
 
 var remoteAddCmd = &cobra.Command{
@@ -25,7 +25,16 @@ var remoteAddCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		name := args[0]
-		url := args[1]
+		rawURL := args[1]
+
+		if err := config.ValidateName(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateURL(rawURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
 
 		cfg, err := config.Load()
 		if err != nil {
@@ -37,34 +46,21 @@ var remoteAddCmd = &cobra.Command{
 			cfg.Remotes = make(map[string]config.Remote)
 		}
 
-		cfg.Remotes[name] = config.Remote{URL: url, Key: remoteKey}
+		cfg.Remotes[name] = config.Remote{URL: rawURL}
 
 		if err := cfg.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Test connection
-		resp, err := http.Get(url + "/api/ping")
-		if err != nil {
-			fmt.Printf("Remote '%s' ajouté (%s) — attention: injoignable\n", name, url)
-			return
-		}
-		resp.Body.Close()
-
+		// Store key in secrets
 		if remoteKey != "" {
-			// Test auth
-			req, _ := http.NewRequest("GET", url+"/api/config", nil)
-			req.Header.Set("X-Hop-Key", remoteKey)
-			resp, err = http.DefaultClient.Do(req)
-			if err != nil || resp.StatusCode == 401 {
-				fmt.Printf("Remote '%s' ajouté (%s) — attention: clé API invalide\n", name, url)
-				return
-			}
-			resp.Body.Close()
+			secrets, _ := config.LoadSecrets()
+			secrets.RemoteKeys[rawURL] = remoteKey
+			secrets.Save()
 		}
 
-		fmt.Printf("Remote '%s' ajouté (%s) — connecté\n", name, url)
+		fmt.Printf("Remote '%s' ajouté (%s)\n", name, rawURL)
 	},
 }
 
@@ -79,6 +75,13 @@ var remoteRemoveCmd = &cobra.Command{
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
+		}
+
+		if r, ok := cfg.Remotes[name]; ok {
+			// Clean up secrets
+			secrets, _ := config.LoadSecrets()
+			delete(secrets.RemoteKeys, r.URL)
+			secrets.Save()
 		}
 
 		delete(cfg.Remotes, name)
@@ -107,11 +110,12 @@ var remoteListCmd = &cobra.Command{
 			return
 		}
 
+		secrets, _ := config.LoadSecrets()
+
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 		fmt.Println("Remotes:")
 		for name, r := range cfg.Remotes {
 			status := "offline"
-			auth := ""
 			resp, err := http.Get(r.URL + "/api/ping")
 			if err == nil {
 				resp.Body.Close()
@@ -120,8 +124,9 @@ var remoteListCmd = &cobra.Command{
 				}
 			}
 
-			if r.Key != "" {
-				auth = " [clé configurée]"
+			auth := ""
+			if _, ok := secrets.RemoteKeys[r.URL]; ok {
+				auth = " [cle configuree]"
 			}
 
 			fmt.Fprintf(w, "  %s\t%s\t[%s]%s\n", name, r.URL, status, auth)
@@ -149,9 +154,11 @@ var remoteInfoCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		secrets, _ := config.LoadSecrets()
+
 		req, _ := http.NewRequest("GET", remote.URL+"/api/config", nil)
-		if remote.Key != "" {
-			req.Header.Set("X-Hop-Key", remote.Key)
+		if key, ok := secrets.RemoteKeys[remote.URL]; ok {
+			req.Header.Set("X-Hop-Key", key)
 		}
 
 		resp, err := http.DefaultClient.Do(req)

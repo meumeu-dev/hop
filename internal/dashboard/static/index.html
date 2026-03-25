@@ -264,6 +264,21 @@
 
     <script>
         const API = '';
+        let csrfToken = '';
+
+        // Fetch CSRF token on load
+        async function initCSRF() {
+            const res = await fetch(API + '/api/csrf');
+            const data = await res.json();
+            csrfToken = data.token;
+        }
+
+        function authHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'X-Hop-CSRF': csrfToken,
+            };
+        }
 
         // --- Navigation ---
         function showPage(page) {
@@ -517,7 +532,7 @@
             const name = editName || document.getElementById('machine-name').value;
             await fetch(API + '/api/machines', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: authHeaders(),
                 body: JSON.stringify({
                     name, ip: document.getElementById('machine-ip').value,
                     user: document.getElementById('machine-user').value,
@@ -533,7 +548,7 @@
             const name = editName || document.getElementById('service-name').value;
             await fetch(API + '/api/services', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: authHeaders(),
                 body: JSON.stringify({
                     name, cmd: document.getElementById('service-cmd').value,
                     desc: document.getElementById('service-desc').value,
@@ -548,7 +563,7 @@
             const url = document.getElementById('remote-url').value;
             await fetch(API + '/api/remotes', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: authHeaders(),
                 body: JSON.stringify({name, url}),
             });
             closeModal('remote');
@@ -558,24 +573,24 @@
         // --- Delete ---
         async function deleteMachine(name) {
             if (!confirm(`Supprimer la machine '${name}' ?`)) return;
-            await fetch(API + `/api/machines/${name}`, {method: 'DELETE'});
+            await fetch(API + `/api/machines/${name}`, {method: 'DELETE', headers: {'X-Hop-CSRF': csrfToken}});
             loadConfig();
         }
 
         async function deleteService(name) {
             if (!confirm(`Supprimer le service '${name}' ?`)) return;
-            await fetch(API + `/api/services/${name}`, {method: 'DELETE'});
+            await fetch(API + `/api/services/${name}`, {method: 'DELETE', headers: {'X-Hop-CSRF': csrfToken}});
             loadConfig();
         }
 
         async function deleteRemote(name) {
             if (!confirm(`Supprimer le remote '${name}' ?`)) return;
-            await fetch(API + `/api/remotes/${name}`, {method: 'DELETE'});
+            await fetch(API + `/api/remotes/${name}`, {method: 'DELETE', headers: {'X-Hop-CSRF': csrfToken}});
             loadRemotes();
         }
 
         // --- Init ---
-        loadConfig();
+        initCSRF().then(() => loadConfig());
     </script>
 </body>
 </html>

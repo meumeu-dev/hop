@@ -33,7 +33,7 @@ var initCmd = &cobra.Command{
 			fmt.Print("Ton nom (pour git): ")
 			gitName, _ = reader.ReadString('\n')
 			gitName = strings.TrimSpace(gitName)
-			exec.Command("git", "config", "--global", "user.name", gitName).Run()
+			exec.Command("git", "config", "--global", "user.name", "--", gitName).Run()
 		} else {
 			fmt.Printf("Git name: %s\n", gitName)
 		}
@@ -42,7 +42,7 @@ var initCmd = &cobra.Command{
 			fmt.Print("Ton email (pour git): ")
 			gitEmail, _ = reader.ReadString('\n')
 			gitEmail = strings.TrimSpace(gitEmail)
-			exec.Command("git", "config", "--global", "user.email", gitEmail).Run()
+			exec.Command("git", "config", "--global", "user.email", "--", gitEmail).Run()
 		} else {
 			fmt.Printf("Git email: %s\n", gitEmail)
 		}
@@ -232,16 +232,9 @@ var cloneCmd = &cobra.Command{
 			// Show first 20 lines
 			if data, err := os.ReadFile(installScript); err == nil {
 				lines := strings.Split(string(data), "\n")
-				maxLines := 20
-				if len(lines) < maxLines {
-					maxLines = len(lines)
-				}
-				fmt.Println("--- contenu (début) ---")
-				for _, line := range lines[:maxLines] {
+				fmt.Println("--- contenu ---")
+				for _, line := range lines {
 					fmt.Println("  " + line)
-				}
-				if len(lines) > 20 {
-					fmt.Printf("  ... (%d lignes de plus)\n", len(lines)-20)
 				}
 				fmt.Println("--- fin ---")
 			}

@@ -71,6 +71,9 @@ var tunnelStatusCmd = &cobra.Command{
 	},
 }
 
+// allowedEnvPrefixes limits which env vars can be set from the env file
+var allowedEnvPrefixes = []string{"CF_", "CLOUDFLARE_", "TUNNEL_"}
+
 func loadEnvFile(path string) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,8 +88,20 @@ func loadEnvFile(path string) {
 			continue
 		}
 		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			os.Setenv(parts[0], parts[1])
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		// Only allow safe env var prefixes
+		allowed := false
+		for _, prefix := range allowedEnvPrefixes {
+			if strings.HasPrefix(strings.ToUpper(key), prefix) {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			os.Setenv(key, strings.TrimSpace(parts[1]))
 		}
 	}
 }

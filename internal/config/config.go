@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,12 +57,12 @@ type CloudflareConfig struct {
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 var validUser = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
-var validIP = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$`)
 var validHostname = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]+$`)
+var validRustdeskID = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 
 func ValidateName(name string) error {
 	if len(name) == 0 || len(name) > 64 {
-		return fmt.Errorf("nom invalide (1-64 caractères)")
+		return fmt.Errorf("nom invalide (1-64 caracteres)")
 	}
 	if !validName.MatchString(name) {
 		return fmt.Errorf("nom invalide: uniquement lettres, chiffres, points, tirets, underscores")
@@ -70,39 +72,54 @@ func ValidateName(name string) error {
 
 func ValidateUser(user string) error {
 	if len(user) == 0 || len(user) > 32 {
-		return fmt.Errorf("utilisateur invalide (1-32 caractères)")
+		return fmt.Errorf("utilisateur invalide (1-32 caracteres)")
 	}
 	if !validUser.MatchString(user) {
-		return fmt.Errorf("utilisateur invalide: uniquement lettres, chiffres, points, tirets, underscores")
+		return fmt.Errorf("utilisateur invalide")
 	}
 	return nil
 }
 
 func ValidateIP(ip string) error {
-	if !validIP.MatchString(ip) {
-		return fmt.Errorf("IP invalide: format attendu x.x.x.x")
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return fmt.Errorf("IP invalide")
+	}
+	// Block special addresses for machine targets
+	if parsed.IsLoopback() || parsed.IsUnspecified() || parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast() {
+		return fmt.Errorf("IP invalide: adresse speciale non autorisee")
 	}
 	return nil
 }
 
-func ValidateURL(url string) error {
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+func ValidateURL(rawURL string) error {
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return fmt.Errorf("URL invalide: doit commencer par http:// ou https://")
 	}
-	// Block private/link-local for SSRF prevention on remote URLs
-	lower := strings.ToLower(url)
-	blockedPrefixes := []string{
-		"http://169.254.", "https://169.254.",
-		"http://127.", "https://127.",
-		"http://0.", "https://0.",
-		"http://localhost", "https://localhost",
-		"http://[::1]", "https://[::1]",
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("URL invalide")
 	}
-	for _, prefix := range blockedPrefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return fmt.Errorf("URL invalide: adresses locales/link-local non autorisées pour les remotes")
+
+	// Resolve hostname and check if it points to a private/loopback IP
+	host := parsed.Hostname()
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		// Can't resolve — allow (might be a tunnel hostname not yet set up)
+		return nil
+	}
+
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("URL invalide: pointe vers une adresse locale/link-local")
 		}
 	}
+
 	return nil
 }
 
@@ -116,6 +133,16 @@ func ValidateTunnel(hostname string) error {
 	return nil
 }
 
+func ValidateRustdeskID(id string) error {
+	if id == "" {
+		return nil
+	}
+	if !validRustdeskID.MatchString(id) {
+		return fmt.Errorf("ID Rustdesk invalide: uniquement alphanumerique")
+	}
+	return nil
+}
+
 func HopDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".hop")
@@ -125,18 +152,61 @@ func ConfigPath() string {
 	return filepath.Join(HopDir(), "config.yml")
 }
 
+func SecretsPath() string {
+	return filepath.Join(HopDir(), "secrets.yml")
+}
+
 func ExpandPath(path string) string {
 	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
-		return home + path[1:]
+		path = home + path[1:]
 	}
-	return path
+	cleaned := filepath.Clean(path)
+	// Ensure it stays within home directory
+	home, _ := os.UserHomeDir()
+	if !strings.HasPrefix(cleaned, home) {
+		return filepath.Join(home, filepath.Base(cleaned))
+	}
+	return cleaned
 }
 
 func GenerateAPIKey() string {
 	bytes := make([]byte, 32)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// Secrets stored separately from config (gitignored)
+type Secrets struct {
+	APIKey     string            `yaml:"api_key,omitempty"`
+	RemoteKeys map[string]string `yaml:"remote_keys,omitempty"`
+}
+
+func LoadSecrets() (*Secrets, error) {
+	data, err := os.ReadFile(SecretsPath())
+	if err != nil {
+		return &Secrets{RemoteKeys: make(map[string]string)}, nil
+	}
+	var s Secrets
+	if err := yaml.Unmarshal(data, &s); err != nil {
+		return &Secrets{RemoteKeys: make(map[string]string)}, nil
+	}
+	if s.RemoteKeys == nil {
+		s.RemoteKeys = make(map[string]string)
+	}
+	return &s, nil
+}
+
+func (s *Secrets) Save() error {
+	data, err := yaml.Marshal(s)
+	if err != nil {
+		return err
+	}
+	path := SecretsPath()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0600)
 }
 
 func Load() (*Config, error) {
@@ -181,10 +251,10 @@ func Init() error {
 		}
 	}
 
-	// Create .gitignore to prevent syncing secrets
+	// Gitignore secrets
 	gitignorePath := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-		gitignore := "# Ne pas sync les secrets\napi.key\n"
+		gitignore := "# Ne pas sync les secrets\nsecrets.yml\n"
 		os.WriteFile(gitignorePath, []byte(gitignore), 0600)
 	}
 

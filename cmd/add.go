@@ -24,6 +24,23 @@ var addMachineCmd = &cobra.Command{
 		user, _ := cmd.Flags().GetString("user")
 		tunnel, _ := cmd.Flags().GetString("tunnel")
 
+		if err := config.ValidateName(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateIP(ip); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateUser(user); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateTunnel(tunnel); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
@@ -37,7 +54,6 @@ var addMachineCmd = &cobra.Command{
 			Services: make(map[string]config.MachineService),
 		}
 
-		// Keep existing services if machine already exists
 		if existing, ok := cfg.Machines[name]; ok {
 			m.Services = existing.Services
 		}
@@ -49,7 +65,7 @@ var addMachineCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Printf("Machine '%s' ajoutée (%s@%s)\n", name, user, ip)
+		fmt.Printf("Machine '%s' ajoutee (%s@%s)\n", name, user, ip)
 	},
 }
 
@@ -63,9 +79,19 @@ var addServiceCmd = &cobra.Command{
 		command, _ := cmd.Flags().GetString("cmd")
 		desc, _ := cmd.Flags().GetString("desc")
 
+		if err := config.ValidateName(name); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+
+		if svc, ok := cfg.Services[name]; ok && svc.Builtin {
+			fmt.Fprintf(os.Stderr, "Impossible de modifier le service builtin '%s'.\n", name)
 			os.Exit(1)
 		}
 
@@ -83,8 +109,7 @@ var addServiceCmd = &cobra.Command{
 	},
 }
 
-// hop add <machine> rustdesk --id <ID>
-// hop add <machine> <service> [--cmd <override>]
+// hop add <machine> <service> [--id <ID>] [--cmd <override>]
 var addMachineServiceCmd = &cobra.Command{
 	Use:   "<machine> <service>",
 	Short: "Ajoute un service à une machine",
@@ -95,6 +120,21 @@ var addMachineServiceCmd = &cobra.Command{
 		id, _ := cmd.Flags().GetString("id")
 		customCmd, _ := cmd.Flags().GetString("cmd")
 
+		if err := config.ValidateName(machineName); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if err := config.ValidateName(serviceName); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		if id != "" {
+			if err := config.ValidateRustdeskID(id); err != nil {
+				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
@@ -103,7 +143,7 @@ var addMachineServiceCmd = &cobra.Command{
 
 		machine, ok := cfg.Machines[machineName]
 		if !ok {
-			fmt.Fprintf(os.Stderr, "Machine '%s' non trouvée. Ajoute-la d'abord: hop add machine %s <ip> --user <user>\n", machineName, machineName)
+			fmt.Fprintf(os.Stderr, "Machine '%s' non trouvée.\n", machineName)
 			os.Exit(1)
 		}
 
