@@ -288,7 +288,13 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		safeRemotes[k] = config.Remote{URL: v.URL}
 	}
 	safeCfg.Remotes = safeRemotes
-	// Strip Cmd from machine services (don't leak commands to remote API consumers)
+	// Strip Cmd from services (don't leak commands to remote API consumers)
+	safeServices := make(map[string]config.Service)
+	for k, s := range cfg.Services {
+		safeServices[k] = config.Service{Desc: s.Desc, Builtin: s.Builtin}
+	}
+	safeCfg.Services = safeServices
+	// Strip Cmd from machine services too
 	safeMachines := make(map[string]config.Machine)
 	for k, m := range cfg.Machines {
 		safeServices := make(map[string]config.MachineService)

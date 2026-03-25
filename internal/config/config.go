@@ -28,7 +28,7 @@ type Remote struct {
 }
 
 type APIConfig struct {
-	Key      string `yaml:"key,omitempty"`
+	Key      string `yaml:"-"`
 	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 

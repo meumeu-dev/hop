@@ -118,8 +118,9 @@ echo "=== Installation terminée ==="
 			os.WriteFile(installPath, []byte(defaultInstall), 0755)
 		}
 
-		// Initial commit
-		exec.Command("git", "-C", hopDir, "add", "-A").Run()
+		// Initial commit (allowlist — no secrets)
+		exec.Command("git", "-C", hopDir, "add", "config.yml", ".gitignore", "install.sh").Run()
+		exec.Command("git", "-C", hopDir, "add", "dotfiles/").Run()
 		exec.Command("git", "-C", hopDir, "commit", "-m", "hop init").Run()
 
 		fmt.Println()

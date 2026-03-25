@@ -174,7 +174,7 @@ var remoteInfoCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1MB max
 
 		var remoteCfg config.Config
 		json.Unmarshal(body, &remoteCfg)

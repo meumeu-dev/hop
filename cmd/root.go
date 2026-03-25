@@ -69,7 +69,7 @@ var rootCmd = &cobra.Command{
 		case "rustdesk":
 			runRustdesk(machine, machineName)
 		default:
-			runRemote(machine, service, machineName)
+			runRemote(machine, service, serviceName)
 		}
 	},
 }
@@ -141,7 +141,7 @@ func runRemote(m config.Machine, svc config.Service, name string) {
 
 	// Check if machine has a custom cmd for this service
 	remoteCmd := svc.Cmd
-	if ms, ok := m.Services[svc.Desc]; ok && ms.Cmd != "" {
+	if ms, ok := m.Services[name]; ok && ms.Cmd != "" {
 		remoteCmd = ms.Cmd
 	}
 
