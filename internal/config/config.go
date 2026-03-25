@@ -24,7 +24,7 @@ type Config struct {
 
 type Remote struct {
 	URL string `yaml:"url"`
-	Key string `yaml:"key,omitempty"`
+	Key string `yaml:"-"` // Never serialize keys to config.yml; they belong in secrets.yml
 }
 
 type APIConfig struct {
