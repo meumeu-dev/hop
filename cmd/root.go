@@ -15,6 +15,7 @@ import (
 
 var tmuxFlag bool
 var sessionFlag string
+var noPermFlag bool
 
 var rootCmd = &cobra.Command{
 	Use:   "hop <service> [machine]",
@@ -51,11 +52,17 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Determine tmux usage: flag overrides config
+		// Determine options: flags override config
 		useTmux := tmuxFlag || service.Tmux
 		sessionName := sessionFlag
 		if sessionName == "" {
 			sessionName = service.Session
+		}
+		useNoPerm := noPermFlag || service.NoPerm
+
+		// Inject --dangerously-skip-permissions for claude commands
+		if useNoPerm && isClaudeCmd(service.Cmd) && !strings.Contains(service.Cmd, "--dangerously-skip-permissions") {
+			service.Cmd = service.Cmd + " --dangerously-skip-permissions"
 		}
 
 		// No machine → run locally
@@ -302,4 +309,5 @@ func Execute() {
 func init() {
 	rootCmd.Flags().BoolVar(&tmuxFlag, "tmux", false, "Lance dans tmux")
 	rootCmd.Flags().StringVarP(&sessionFlag, "session", "s", "", "Nom de la session tmux")
+	rootCmd.Flags().BoolVar(&noPermFlag, "noperm", false, "Lance Claude sans permissions")
 }

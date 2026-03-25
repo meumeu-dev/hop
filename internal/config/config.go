@@ -50,6 +50,7 @@ type Service struct {
 	Builtin bool   `yaml:"builtin,omitempty"`
 	Tmux    bool   `yaml:"tmux,omitempty"`
 	Session string `yaml:"session,omitempty"`
+	NoPerm  bool   `yaml:"noperm,omitempty"`
 }
 
 type CloudflareConfig struct {
