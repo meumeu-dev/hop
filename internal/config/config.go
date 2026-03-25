@@ -48,6 +48,8 @@ type Service struct {
 	Desc    string `yaml:"desc"`
 	Cmd     string `yaml:"cmd,omitempty"`
 	Builtin bool   `yaml:"builtin,omitempty"`
+	Tmux    bool   `yaml:"tmux,omitempty"`
+	Session string `yaml:"session,omitempty"`
 }
 
 type CloudflareConfig struct {

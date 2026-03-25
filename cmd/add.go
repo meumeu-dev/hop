@@ -78,6 +78,8 @@ var addServiceCmd = &cobra.Command{
 		name := args[0]
 		command, _ := cmd.Flags().GetString("cmd")
 		desc, _ := cmd.Flags().GetString("desc")
+		tmux, _ := cmd.Flags().GetBool("tmux")
+		session, _ := cmd.Flags().GetString("session")
 
 		if err := config.ValidateName(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
@@ -96,8 +98,10 @@ var addServiceCmd = &cobra.Command{
 		}
 
 		cfg.Services[name] = config.Service{
-			Desc: desc,
-			Cmd:  command,
+			Desc:    desc,
+			Cmd:     command,
+			Tmux:    tmux,
+			Session: session,
 		}
 
 		if err := cfg.Save(); err != nil {
@@ -173,6 +177,8 @@ func init() {
 
 	addServiceCmd.Flags().String("cmd", "", "Commande à exécuter")
 	addServiceCmd.Flags().String("desc", "", "Description")
+	addServiceCmd.Flags().Bool("tmux", false, "Toujours lancer dans tmux")
+	addServiceCmd.Flags().String("session", "", "Nom de session tmux par défaut")
 	addServiceCmd.MarkFlagRequired("cmd")
 
 	addMachineServiceCmd.Flags().String("id", "", "ID Rustdesk")

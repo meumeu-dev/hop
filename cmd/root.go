@@ -1,15 +1,20 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
+
+var tmuxFlag bool
+var sessionFlag string
 
 var rootCmd = &cobra.Command{
 	Use:   "hop <service> [machine]",
@@ -46,13 +51,25 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Determine tmux usage: flag overrides config
+		useTmux := tmuxFlag || service.Tmux
+		sessionName := sessionFlag
+		if sessionName == "" {
+			sessionName = service.Session
+		}
+
 		// No machine → run locally
 		if machineName == "" {
 			if service.Builtin {
 				fmt.Fprintf(os.Stderr, "'%s' nécessite une machine. Ex: hop %s pc1\n", serviceName, serviceName)
 				os.Exit(1)
 			}
-			runLocal(service.Cmd)
+
+			if useTmux {
+				runLocalTmux(service, serviceName, sessionName)
+			} else {
+				runLocal(service.Cmd)
+			}
 			return
 		}
 
@@ -65,13 +82,118 @@ var rootCmd = &cobra.Command{
 
 		switch serviceName {
 		case "ssh":
-			runSSH(machine)
+			if useTmux {
+				runSSHTmux(machine, sessionName)
+			} else {
+				runSSH(machine)
+			}
 		case "rustdesk":
 			runRustdesk(machine, machineName)
 		default:
-			runRemote(machine, service, serviceName)
+			if useTmux {
+				runRemoteTmux(machine, service, serviceName, sessionName)
+			} else {
+				runRemote(machine, service, serviceName)
+			}
 		}
 	},
+}
+
+// askSession prompts for a session name if not provided
+func askSession(sessionName string, serviceName string) string {
+	if sessionName != "" {
+		return sessionName
+	}
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Nom de session tmux [%s]: ", serviceName)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return serviceName
+	}
+	return input
+}
+
+// isClaudeCmd detects if the command is a Claude CLI command
+func isClaudeCmd(cmd string) bool {
+	return strings.Contains(cmd, "claude")
+}
+
+// buildTmuxCmd wraps a command in tmux
+func buildTmuxCmd(command string, session string) *exec.Cmd {
+	// If it's a claude command, add --session-name
+	if isClaudeCmd(command) && !strings.Contains(command, "--session-name") {
+		command = command + " --session-name " + session
+	}
+	return exec.Command("tmux", "new-session", "-s", session, command)
+}
+
+func runLocalTmux(svc config.Service, serviceName string, sessionName string) {
+	session := askSession(sessionName, serviceName)
+	sh := buildTmuxCmd(svc.Cmd, session)
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	fmt.Printf("→ tmux session '%s'\n", session)
+	err := sh.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+	}
+}
+
+func runSSHTmux(m config.Machine, sessionName string) {
+	session := askSession(sessionName, "ssh")
+	target, viaTunnel := detectTarget(m)
+	args := sshArgs(target, viaTunnel)
+
+	// SSH into remote, then start tmux there
+	remoteCmd := fmt.Sprintf("tmux new-session -A -s %s", session)
+	args = append(args, "-t", "--", remoteCmd)
+	sh := exec.Command("ssh", args...)
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	fmt.Printf("→ tmux session '%s' (distant)\n", session)
+	err := sh.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+	}
+}
+
+func runRemoteTmux(m config.Machine, svc config.Service, serviceName string, sessionName string) {
+	session := askSession(sessionName, serviceName)
+	target, viaTunnel := detectTarget(m)
+
+	remoteCmd := svc.Cmd
+	if ms, ok := m.Services[serviceName]; ok && ms.Cmd != "" {
+		remoteCmd = ms.Cmd
+	}
+
+	// If it's a claude command, add --session-name
+	if isClaudeCmd(remoteCmd) && !strings.Contains(remoteCmd, "--session-name") {
+		remoteCmd = remoteCmd + " --session-name " + session
+	}
+
+	// Wrap in tmux on the remote
+	tmuxRemoteCmd := fmt.Sprintf("tmux new-session -s %s '%s'", session, strings.ReplaceAll(remoteCmd, "'", "'\\''"))
+
+	args := sshArgs(target, viaTunnel)
+	args = append(args, "-t", "--", tmuxRemoteCmd)
+	sh := exec.Command("ssh", args...)
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	fmt.Printf("→ tmux session '%s' (distant)\n", session)
+	err := sh.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+	}
 }
 
 func detectTarget(m config.Machine) (target string, viaTunnel bool) {
@@ -139,7 +261,6 @@ func runRustdesk(m config.Machine, name string) {
 func runRemote(m config.Machine, svc config.Service, name string) {
 	target, viaTunnel := detectTarget(m)
 
-	// Check if machine has a custom cmd for this service
 	remoteCmd := svc.Cmd
 	if ms, ok := m.Services[name]; ok && ms.Cmd != "" {
 		remoteCmd = ms.Cmd
@@ -176,4 +297,9 @@ func Execute() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func init() {
+	rootCmd.Flags().BoolVar(&tmuxFlag, "tmux", false, "Lance dans tmux")
+	rootCmd.Flags().StringVarP(&sessionFlag, "session", "s", "", "Nom de la session tmux")
 }
