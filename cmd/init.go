@@ -180,6 +180,23 @@ var cloneCmd = &cobra.Command{
 
 		reader := bufio.NewReader(os.Stdin)
 
+		// Warn about service commands in cloned config
+		if clonedCfg, err := config.Load(); err == nil {
+			hasCustomCmds := false
+			for name, svc := range clonedCfg.Services {
+				if !svc.Builtin && svc.Cmd != "" {
+					if !hasCustomCmds {
+						fmt.Println("\n⚠ Services avec commandes personnalisées détectés:")
+						hasCustomCmds = true
+					}
+					fmt.Printf("  %s: %s\n", name, svc.Cmd)
+				}
+			}
+			if hasCustomCmds {
+				fmt.Println("  Ces commandes seront exécutées quand tu lanceras ces services.")
+			}
+		}
+
 		// Deploy dotfiles with confirmation
 		dotfilesDir := filepath.Join(hopDir, "dotfiles")
 		home, _ := os.UserHomeDir()

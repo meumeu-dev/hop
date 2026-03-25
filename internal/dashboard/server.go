@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/meumeu-dev/hop/internal/config"
 )
@@ -24,10 +26,30 @@ var staticFiles embed.FS
 
 var configMu sync.Mutex
 
-// HTTP client that does NOT follow redirects (SSRF prevention)
-var safeClient = &http.Client{
+// SafeClient: no redirects, timeout, blocks private IPs at dial time (anti DNS rebinding)
+var SafeClient = &http.Client{
+	Timeout: 10 * time.Second,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid address")
+			}
+			ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ip := range ips {
+				if ip.IP.IsLoopback() || ip.IP.IsPrivate() || ip.IP.IsLinkLocalUnicast() || ip.IP.IsLinkLocalMulticast() || ip.IP.IsUnspecified() {
+					return nil, fmt.Errorf("connection to private/loopback IP blocked")
+				}
+			}
+			dialer := &net.Dialer{Timeout: 5 * time.Second}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		},
 	},
 }
 
@@ -165,10 +187,16 @@ func Start(port int, open bool) error {
 	}
 
 	handler := dashboardAuthMiddleware(csrfToken, mux)
-	return http.Serve(listener, handler)
+	server := &http.Server{
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	return server.Serve(listener)
 }
 
-func StartAPI(port int) error {
+func StartAPI(port int, readOnly bool) error {
 	secrets, _ := config.LoadSecrets()
 
 	if secrets.APIKey == "" {
@@ -179,7 +207,7 @@ func StartAPI(port int) error {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux)
 
-	handler := securityMiddleware(authMiddleware(secrets.APIKey, false, mux))
+	handler := securityMiddleware(authMiddleware(secrets.APIKey, readOnly, mux))
 
 	addr := fmt.Sprintf(":%d", port)
 	listener, err := net.Listen("tcp", addr)
@@ -194,7 +222,17 @@ func StartAPI(port int) error {
 	fmt.Println()
 	fmt.Printf("Pour connecter un client: hop remote add <nom> http://<ip>:%d --key <cle>\n", port)
 
-	return http.Serve(listener, handler)
+	if readOnly {
+		fmt.Println("-> Mode: lecture seule")
+	}
+
+	server := &http.Server{
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+	return server.Serve(listener)
 }
 
 func openBrowser(url string) {
@@ -222,7 +260,7 @@ func remoteGet(remote config.Remote, path string) (*http.Response, error) {
 	if key != "" {
 		req.Header.Set("X-Hop-Key", key)
 	}
-	return safeClient.Do(req)
+	return SafeClient.Do(req)
 }
 
 // --- Handlers ---
@@ -250,6 +288,18 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		safeRemotes[k] = config.Remote{URL: v.URL}
 	}
 	safeCfg.Remotes = safeRemotes
+	// Strip Cmd from machine services (don't leak commands to remote API consumers)
+	safeMachines := make(map[string]config.Machine)
+	for k, m := range cfg.Machines {
+		safeServices := make(map[string]config.MachineService)
+		for sk, sv := range m.Services {
+			safeServices[sk] = config.MachineService{ID: sv.ID}
+		}
+		safeMachines[k] = config.Machine{
+			IP: m.IP, User: m.User, Tunnel: m.Tunnel, Services: safeServices,
+		}
+	}
+	safeCfg.Machines = safeMachines
 	configMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -550,7 +600,7 @@ func handleRemotePing(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
-	resp, err := safeClient.Get(remote.URL + "/api/ping")
+	resp, err := SafeClient.Get(remote.URL + "/api/ping")
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"status":"offline"}`)

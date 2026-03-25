@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/meumeu-dev/hop/internal/config"
+	"github.com/meumeu-dev/hop/internal/dashboard"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +117,7 @@ var remoteListCmd = &cobra.Command{
 		fmt.Println("Remotes:")
 		for name, r := range cfg.Remotes {
 			status := "offline"
-			resp, err := http.Get(r.URL + "/api/ping")
+			resp, err := dashboard.SafeClient.Get(r.URL + "/api/ping")
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == 200 {
@@ -161,7 +162,7 @@ var remoteInfoCmd = &cobra.Command{
 			req.Header.Set("X-Hop-Key", key)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := dashboard.SafeClient.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur connexion à '%s': %v\n", name, err)
 			os.Exit(1)

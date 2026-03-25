@@ -21,7 +21,12 @@ var syncCmd = &cobra.Command{
 			runGit(dir, "init")
 		}
 
-		runGit(dir, "add", "-A")
+		// Add only safe files (not secrets, keys, env files)
+		runGit(dir, "add", "config.yml", ".gitignore")
+		runGit(dir, "add", "install.sh")
+		runGit(dir, "add", "dotfiles/")
+		// Stage any deletions
+		runGit(dir, "add", "-u")
 
 		status := exec.Command("git", "-C", dir, "status", "--porcelain")
 		out, _ := status.Output()

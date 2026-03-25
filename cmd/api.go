@@ -36,7 +36,7 @@ var apiCmd = &cobra.Command{
 			return
 		}
 
-		if err := dashboard.StartAPI(apiPort); err != nil {
+		if err := dashboard.StartAPI(apiPort, apiReadOnly); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
