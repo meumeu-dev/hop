@@ -289,6 +289,17 @@
             renderRemotes(cfg.remotes || {});
         }
 
+        // --- XSS Protection ---
+        function esc(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+
+        function escAttr(str) {
+            return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
         // --- Render ---
         function renderMachines(machines) {
             const el = document.getElementById('machines-list');
@@ -300,15 +311,15 @@
             let html = '<table><tr><th>Nom</th><th>Connexion</th><th>Services</th><th></th></tr>';
             for (const name of keys) {
                 const m = machines[name];
-                const svcs = m.services ? Object.keys(m.services).map(s => `<span class="tag">${s}</span>`).join('') : '';
+                const svcs = m.services ? Object.keys(m.services).map(s => `<span class="tag">${esc(s)}</span>`).join('') : '';
                 const tunnel = m.tunnel ? ` <span class="tag green">tunnel</span>` : '';
                 html += `<tr>
-                    <td><strong>${name}</strong></td>
-                    <td>${m.user}@${m.ip}${tunnel}</td>
+                    <td><strong>${esc(name)}</strong></td>
+                    <td>${esc(m.user)}@${esc(m.ip)}${tunnel}</td>
                     <td>${svcs}</td>
                     <td class="actions">
-                        <button onclick="editMachine('${name}')">Modifier</button>
-                        <button class="danger" onclick="deleteMachine('${name}')">Supprimer</button>
+                        <button onclick="editMachine('${escAttr(name)}')">Modifier</button>
+                        <button class="danger" onclick="deleteMachine('${escAttr(name)}')">Supprimer</button>
                     </td>
                 </tr>`;
             }
@@ -328,11 +339,11 @@
                 const s = services[name];
                 const builtin = s.builtin ? ' <span class="tag gray">builtin</span>' : '';
                 html += `<tr>
-                    <td><strong>${name}</strong>${builtin}</td>
-                    <td>${s.desc || ''}</td>
+                    <td><strong>${esc(name)}</strong>${builtin}</td>
+                    <td>${esc(s.desc || '')}</td>
                     <td class="actions">
-                        ${s.builtin ? '' : `<button onclick="editService('${name}')">Modifier</button>
-                        <button class="danger" onclick="deleteService('${name}')">Supprimer</button>`}
+                        ${s.builtin ? '' : `<button onclick="editService('${escAttr(name)}')">Modifier</button>
+                        <button class="danger" onclick="deleteService('${escAttr(name)}')">Supprimer</button>`}
                     </td>
                 </tr>`;
             }
@@ -347,8 +358,7 @@
                 return;
             }
             el.innerHTML = `<div class="cf-config">
-                <p>Domaine: <span>${cf.domain}</span></p>
-                <p>Fichier env: <span>${cf.env_file || 'non defini'}</span></p>
+                <p>Domaine: <span>${esc(cf.domain)}</span></p>
             </div>`;
         }
 
@@ -362,13 +372,14 @@
             let html = '<table><tr><th>Nom</th><th>URL</th><th>Statut</th><th></th></tr>';
             for (const name of keys) {
                 const r = remotes[name];
+                const safeName = escAttr(name);
                 html += `<tr>
-                    <td><strong>${name}</strong></td>
-                    <td>${r.url}</td>
-                    <td><span class="status-dot unknown" id="status-${name}"></span><span id="status-text-${name}">...</span></td>
+                    <td><strong>${esc(name)}</strong></td>
+                    <td>${esc(r.url)}</td>
+                    <td><span class="status-dot unknown" id="status-${safeName}"></span><span id="status-text-${safeName}">...</span></td>
                     <td class="actions">
-                        <button onclick="viewRemote('${name}')">Voir</button>
-                        <button class="danger" onclick="deleteRemote('${name}')">Supprimer</button>
+                        <button onclick="viewRemote('${safeName}')">Voir</button>
+                        <button class="danger" onclick="deleteRemote('${safeName}')">Supprimer</button>
                     </td>
                 </tr>`;
             }
@@ -422,7 +433,7 @@
                     html += '<div class="remote-detail"><h4>Services</h4><table><tr><th>Nom</th><th>Description</th></tr>';
                     for (const s of skeys) {
                         const builtin = services[s].builtin ? ' <span class="tag gray">builtin</span>' : '';
-                        html += `<tr><td>${s}${builtin}</td><td>${services[s].desc || ''}</td></tr>`;
+                        html += `<tr><td>${esc(s)}${builtin}</td><td>${esc(services[s].desc || '')}</td></tr>`;
                     }
                     html += '</table></div>';
                 }
@@ -433,7 +444,7 @@
                     html += '<div class="remote-detail" style="margin-top:12px"><h4>Machines</h4><table><tr><th>Nom</th><th>Connexion</th></tr>';
                     for (const m of mkeys) {
                         const tunnel = machines[m].tunnel ? ' <span class="tag green">tunnel</span>' : '';
-                        html += `<tr><td>${m}</td><td>${machines[m].user}@${machines[m].ip}${tunnel}</td></tr>`;
+                        html += `<tr><td>${esc(m)}</td><td>${esc(machines[m].user)}@${esc(machines[m].ip)}${tunnel}</td></tr>`;
                     }
                     html += '</table></div>';
                 }
