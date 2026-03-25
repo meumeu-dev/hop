@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>hop — dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f1117;
+            color: #e1e4e8;
+            min-height: 100vh;
+        }
+        header {
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 { font-size: 20px; font-weight: 600; }
+        header h1 span { color: #58a6ff; }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block; margin-right: 6px;
+        }
+        .status-dot.online { background: #3fb950; }
+        .status-dot.offline { background: #f85149; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            color: #58a6ff;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .card h2 button {
+            background: #238636;
+            color: #fff;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .card h2 button:hover { background: #2ea043; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            text-align: left;
+            padding: 8px 12px;
+            border-bottom: 1px solid #21262d;
+            font-size: 14px;
+        }
+        th { color: #8b949e; font-weight: 500; }
+        .actions button {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 4px;
+        }
+        .actions button:hover { background: #30363d; }
+        .actions button.danger { color: #f85149; }
+        .actions button.danger:hover { background: #f8514922; }
+        .tag {
+            background: #1f6feb33;
+            color: #58a6ff;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-right: 4px;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            width: 90%;
+            max-width: 500px;
+        }
+        .modal h3 { margin-bottom: 16px; }
+        .modal label {
+            display: block;
+            font-size: 13px;
+            color: #8b949e;
+            margin-bottom: 4px;
+            margin-top: 12px;
+        }
+        .modal input, .modal select {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #e1e4e8;
+            font-size: 14px;
+        }
+        .modal-actions {
+            margin-top: 20px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+        .modal-actions button {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-cancel { background: #21262d; color: #c9d1d9; }
+        .btn-save { background: #238636; color: #fff; border: none; }
+        .btn-save:hover { background: #2ea043; }
+        .empty { color: #8b949e; font-style: italic; padding: 12px; }
+        .cf-config { margin-top: 12px; }
+        .cf-config p { font-size: 13px; color: #8b949e; margin: 4px 0; }
+        .cf-config span { color: #e1e4e8; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1><span>hop</span> dashboard</h1>
+        <div id="header-info" style="font-size: 13px; color: #8b949e;"></div>
+    </header>
+
+    <div class="container">
+        <div class="grid">
+            <div class="card">
+                <h2>Machines <button onclick="openModal('machine')">+ Ajouter</button></h2>
+                <div id="machines-list"></div>
+            </div>
+
+            <div class="card">
+                <h2>Services <button onclick="openModal('service')">+ Ajouter</button></h2>
+                <div id="services-list"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Cloudflare</h2>
+            <div id="cloudflare-info"></div>
+        </div>
+    </div>
+
+    <!-- Modal Machine -->
+    <div class="modal-overlay" id="modal-machine">
+        <div class="modal">
+            <h3 id="modal-machine-title">Ajouter une machine</h3>
+            <input type="hidden" id="machine-edit-name">
+            <label>Nom</label>
+            <input type="text" id="machine-name" placeholder="rpi">
+            <label>IP</label>
+            <input type="text" id="machine-ip" placeholder="192.168.1.50">
+            <label>Utilisateur SSH</label>
+            <input type="text" id="machine-user" placeholder="pi">
+            <label>Tunnel Cloudflare (optionnel)</label>
+            <input type="text" id="machine-tunnel" placeholder="ssh.rpi.meumeu.dev">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal('machine')">Annuler</button>
+                <button class="btn-save" onclick="saveMachine()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Service -->
+    <div class="modal-overlay" id="modal-service">
+        <div class="modal">
+            <h3 id="modal-service-title">Ajouter un service</h3>
+            <input type="hidden" id="service-edit-name">
+            <label>Nom</label>
+            <input type="text" id="service-name" placeholder="claude">
+            <label>Commande</label>
+            <input type="text" id="service-cmd" placeholder="claude --dangerously-skip-permissions">
+            <label>Description</label>
+            <input type="text" id="service-desc" placeholder="Lance Claude sans permissions">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal('service')">Annuler</button>
+                <button class="btn-save" onclick="saveService()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        async function loadConfig() {
+            const res = await fetch(API + '/api/config');
+            const cfg = await res.json();
+            renderMachines(cfg.machines || {});
+            renderServices(cfg.services || {});
+            renderCloudflare(cfg.cloudflare || {});
+        }
+
+        function renderMachines(machines) {
+            const el = document.getElementById('machines-list');
+            const keys = Object.keys(machines).sort();
+            if (keys.length === 0) {
+                el.innerHTML = '<p class="empty">Aucune machine configurée</p>';
+                return;
+            }
+            let html = '<table><tr><th>Nom</th><th>Connexion</th><th>Services</th><th></th></tr>';
+            for (const name of keys) {
+                const m = machines[name];
+                const svcs = m.services ? Object.keys(m.services).map(s => `<span class="tag">${s}</span>`).join('') : '';
+                const tunnel = m.tunnel ? ` <span class="tag">tunnel</span>` : '';
+                html += `<tr>
+                    <td><strong>${name}</strong></td>
+                    <td>${m.user}@${m.ip}${tunnel}</td>
+                    <td>${svcs}</td>
+                    <td class="actions">
+                        <button onclick="editMachine('${name}')">Modifier</button>
+                        <button class="danger" onclick="deleteMachine('${name}')">Supprimer</button>
+                    </td>
+                </tr>`;
+            }
+            html += '</table>';
+            el.innerHTML = html;
+        }
+
+        function renderServices(services) {
+            const el = document.getElementById('services-list');
+            const keys = Object.keys(services).sort();
+            if (keys.length === 0) {
+                el.innerHTML = '<p class="empty">Aucun service configuré</p>';
+                return;
+            }
+            let html = '<table><tr><th>Nom</th><th>Description</th><th></th></tr>';
+            for (const name of keys) {
+                const s = services[name];
+                const builtin = s.builtin ? ' <span class="tag">builtin</span>' : '';
+                html += `<tr>
+                    <td><strong>${name}</strong>${builtin}</td>
+                    <td>${s.desc || ''}</td>
+                    <td class="actions">
+                        ${s.builtin ? '' : `<button onclick="editService('${name}')">Modifier</button>
+                        <button class="danger" onclick="deleteService('${name}')">Supprimer</button>`}
+                    </td>
+                </tr>`;
+            }
+            html += '</table>';
+            el.innerHTML = html;
+        }
+
+        function renderCloudflare(cf) {
+            const el = document.getElementById('cloudflare-info');
+            if (!cf.domain) {
+                el.innerHTML = '<p class="empty">Non configuré</p>';
+                return;
+            }
+            el.innerHTML = `<div class="cf-config">
+                <p>Domaine: <span>${cf.domain}</span></p>
+                <p>Fichier env: <span>${cf.env_file || 'non défini'}</span></p>
+            </div>`;
+        }
+
+        function openModal(type) {
+            document.getElementById(`modal-${type}`).classList.add('active');
+            if (type === 'machine') {
+                document.getElementById('modal-machine-title').textContent = 'Ajouter une machine';
+                document.getElementById('machine-edit-name').value = '';
+                document.getElementById('machine-name').value = '';
+                document.getElementById('machine-name').disabled = false;
+                document.getElementById('machine-ip').value = '';
+                document.getElementById('machine-user').value = '';
+                document.getElementById('machine-tunnel').value = '';
+            } else {
+                document.getElementById('modal-service-title').textContent = 'Ajouter un service';
+                document.getElementById('service-edit-name').value = '';
+                document.getElementById('service-name').value = '';
+                document.getElementById('service-name').disabled = false;
+                document.getElementById('service-cmd').value = '';
+                document.getElementById('service-desc').value = '';
+            }
+        }
+
+        function closeModal(type) {
+            document.getElementById(`modal-${type}`).classList.remove('active');
+        }
+
+        async function editMachine(name) {
+            const res = await fetch(API + '/api/config');
+            const cfg = await res.json();
+            const m = cfg.machines[name];
+            document.getElementById('modal-machine-title').textContent = 'Modifier ' + name;
+            document.getElementById('machine-edit-name').value = name;
+            document.getElementById('machine-name').value = name;
+            document.getElementById('machine-name').disabled = true;
+            document.getElementById('machine-ip').value = m.ip;
+            document.getElementById('machine-user').value = m.user;
+            document.getElementById('machine-tunnel').value = m.tunnel || '';
+            document.getElementById('modal-machine').classList.add('active');
+        }
+
+        async function editService(name) {
+            const res = await fetch(API + '/api/config');
+            const cfg = await res.json();
+            const s = cfg.services[name];
+            document.getElementById('modal-service-title').textContent = 'Modifier ' + name;
+            document.getElementById('service-edit-name').value = name;
+            document.getElementById('service-name').value = name;
+            document.getElementById('service-name').disabled = true;
+            document.getElementById('service-cmd').value = s.cmd || '';
+            document.getElementById('service-desc').value = s.desc || '';
+            document.getElementById('modal-service').classList.add('active');
+        }
+
+        async function saveMachine() {
+            const editName = document.getElementById('machine-edit-name').value;
+            const name = editName || document.getElementById('machine-name').value;
+            const data = {
+                name: name,
+                ip: document.getElementById('machine-ip').value,
+                user: document.getElementById('machine-user').value,
+                tunnel: document.getElementById('machine-tunnel').value,
+            };
+            await fetch(API + '/api/machines', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data),
+            });
+            closeModal('machine');
+            loadConfig();
+        }
+
+        async function saveService() {
+            const editName = document.getElementById('service-edit-name').value;
+            const name = editName || document.getElementById('service-name').value;
+            const data = {
+                name: name,
+                cmd: document.getElementById('service-cmd').value,
+                desc: document.getElementById('service-desc').value,
+            };
+            await fetch(API + '/api/services', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(data),
+            });
+            closeModal('service');
+            loadConfig();
+        }
+
+        async function deleteMachine(name) {
+            if (!confirm(`Supprimer la machine '${name}' ?`)) return;
+            await fetch(API + `/api/machines/${name}`, {method: 'DELETE'});
+            loadConfig();
+        }
+
+        async function deleteService(name) {
+            if (!confirm(`Supprimer le service '${name}' ?`)) return;
+            await fetch(API + `/api/services/${name}`, {method: 'DELETE'});
+            loadConfig();
+        }
+
+        loadConfig();
+    </script>
+</body>
+</html>

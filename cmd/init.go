@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
+	"github.com/meumeu-dev/hop/internal/dashboard"
 	"github.com/spf13/cobra"
 )
 
@@ -124,10 +125,27 @@ echo "=== Installation terminée ==="
 		fmt.Println()
 		fmt.Println("→ hop est prêt !")
 		fmt.Println()
-		fmt.Println("Prochaines étapes:")
-		fmt.Println("  hop add machine rpi 192.168.1.50 --user pi")
-		fmt.Println("  hop add service claude --cmd \"claude --dangerously-skip-permissions\" --desc \"Claude\"")
-		fmt.Println("  hop list")
+
+		// Ask CLI or Dashboard
+		fmt.Println("Comment veux-tu configurer hop ?")
+		fmt.Println("  1) Dashboard (navigateur)")
+		fmt.Println("  2) CLI (terminal)")
+		fmt.Print("Choix [1/2]: ")
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+
+		if choice == "1" {
+			fmt.Println()
+			fmt.Println("→ Lancement du dashboard...")
+			dashboard.Start(8080, true)
+		} else {
+			fmt.Println()
+			fmt.Println("Prochaines étapes:")
+			fmt.Println("  hop add machine rpi 192.168.1.50 --user pi")
+			fmt.Println("  hop add service claude --cmd \"claude --dangerously-skip-permissions\" --desc \"Claude\"")
+			fmt.Println("  hop list")
+			fmt.Println("  hop dashboard   — pour ouvrir le dashboard plus tard")
+		}
 	},
 }
 
