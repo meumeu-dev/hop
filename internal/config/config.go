@@ -12,7 +12,12 @@ import (
 type Config struct {
 	Machines   map[string]Machine  `yaml:"machines"`
 	Services   map[string]Service  `yaml:"services"`
+	Remotes    map[string]Remote   `yaml:"remotes,omitempty"`
 	Cloudflare CloudflareConfig    `yaml:"cloudflare"`
+}
+
+type Remote struct {
+	URL string `yaml:"url"`
 }
 
 type Machine struct {

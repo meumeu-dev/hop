@@ -22,12 +22,29 @@
         }
         header h1 { font-size: 20px; font-weight: 600; }
         header h1 span { color: #58a6ff; }
+        .nav {
+            display: flex;
+            gap: 8px;
+        }
+        .nav button {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .nav button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+        .nav button:hover { background: #30363d; }
+        .nav button.active:hover { background: #1a60d2; }
         .status-dot {
             width: 8px; height: 8px; border-radius: 50%;
             display: inline-block; margin-right: 6px;
         }
         .status-dot.online { background: #3fb950; }
         .status-dot.offline { background: #f85149; }
+        .status-dot.unknown { background: #8b949e; }
         .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
         @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
@@ -37,6 +54,7 @@
             border-radius: 8px;
             padding: 20px;
         }
+        .card.full { grid-column: 1 / -1; }
         .card h2 {
             font-size: 16px;
             margin-bottom: 16px;
@@ -84,6 +102,9 @@
             font-size: 12px;
             margin-right: 4px;
         }
+        .tag.green { background: #23863633; color: #3fb950; }
+        .tag.red { background: #f8514933; color: #f85149; }
+        .tag.gray { background: #8b949e33; color: #8b949e; }
         .modal-overlay {
             display: none;
             position: fixed;
@@ -139,15 +160,23 @@
         .cf-config { margin-top: 12px; }
         .cf-config p { font-size: 13px; color: #8b949e; margin: 4px 0; }
         .cf-config span { color: #e1e4e8; }
+        .page { display: none; }
+        .page.active { display: block; }
+        .remote-detail { margin-top: 16px; padding: 16px; background: #0d1117; border-radius: 8px; border: 1px solid #21262d; }
+        .remote-detail h4 { color: #58a6ff; margin-bottom: 12px; }
     </style>
 </head>
 <body>
     <header>
         <h1><span>hop</span> dashboard</h1>
-        <div id="header-info" style="font-size: 13px; color: #8b949e;"></div>
+        <div class="nav">
+            <button class="active" onclick="showPage('local')">Local</button>
+            <button onclick="showPage('remotes')">Remotes</button>
+        </div>
     </header>
 
-    <div class="container">
+    <!-- LOCAL PAGE -->
+    <div class="container page active" id="page-local">
         <div class="grid">
             <div class="card">
                 <h2>Machines <button onclick="openModal('machine')">+ Ajouter</button></h2>
@@ -158,11 +187,25 @@
                 <h2>Services <button onclick="openModal('service')">+ Ajouter</button></h2>
                 <div id="services-list"></div>
             </div>
-        </div>
 
-        <div class="card">
-            <h2>Cloudflare</h2>
-            <div id="cloudflare-info"></div>
+            <div class="card full">
+                <h2>Cloudflare</h2>
+                <div id="cloudflare-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- REMOTES PAGE -->
+    <div class="container page" id="page-remotes">
+        <div class="grid">
+            <div class="card full">
+                <h2>Hop Remotes <button onclick="openModal('remote')">+ Ajouter</button></h2>
+                <div id="remotes-list"></div>
+            </div>
+            <div class="card full" id="remote-detail-card" style="display:none;">
+                <h2 id="remote-detail-title">Détails</h2>
+                <div id="remote-detail-content"></div>
+            </div>
         </div>
     </div>
 
@@ -204,9 +247,34 @@
         </div>
     </div>
 
+    <!-- Modal Remote -->
+    <div class="modal-overlay" id="modal-remote">
+        <div class="modal">
+            <h3>Ajouter un hop distant</h3>
+            <label>Nom</label>
+            <input type="text" id="remote-name" placeholder="bureau">
+            <label>URL</label>
+            <input type="text" id="remote-url" placeholder="http://192.168.1.100:9090">
+            <div class="modal-actions">
+                <button class="btn-cancel" onclick="closeModal('remote')">Annuler</button>
+                <button class="btn-save" onclick="saveRemote()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const API = '';
 
+        // --- Navigation ---
+        function showPage(page) {
+            document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+            document.getElementById('page-' + page).classList.add('active');
+            event.target.classList.add('active');
+            if (page === 'remotes') loadRemotes();
+        }
+
+        // --- Load ---
         async function loadConfig() {
             const res = await fetch(API + '/api/config');
             const cfg = await res.json();
@@ -215,18 +283,25 @@
             renderCloudflare(cfg.cloudflare || {});
         }
 
+        async function loadRemotes() {
+            const res = await fetch(API + '/api/config');
+            const cfg = await res.json();
+            renderRemotes(cfg.remotes || {});
+        }
+
+        // --- Render ---
         function renderMachines(machines) {
             const el = document.getElementById('machines-list');
             const keys = Object.keys(machines).sort();
             if (keys.length === 0) {
-                el.innerHTML = '<p class="empty">Aucune machine configurée</p>';
+                el.innerHTML = '<p class="empty">Aucune machine configuree</p>';
                 return;
             }
             let html = '<table><tr><th>Nom</th><th>Connexion</th><th>Services</th><th></th></tr>';
             for (const name of keys) {
                 const m = machines[name];
                 const svcs = m.services ? Object.keys(m.services).map(s => `<span class="tag">${s}</span>`).join('') : '';
-                const tunnel = m.tunnel ? ` <span class="tag">tunnel</span>` : '';
+                const tunnel = m.tunnel ? ` <span class="tag green">tunnel</span>` : '';
                 html += `<tr>
                     <td><strong>${name}</strong></td>
                     <td>${m.user}@${m.ip}${tunnel}</td>
@@ -245,13 +320,13 @@
             const el = document.getElementById('services-list');
             const keys = Object.keys(services).sort();
             if (keys.length === 0) {
-                el.innerHTML = '<p class="empty">Aucun service configuré</p>';
+                el.innerHTML = '<p class="empty">Aucun service configure</p>';
                 return;
             }
             let html = '<table><tr><th>Nom</th><th>Description</th><th></th></tr>';
             for (const name of keys) {
                 const s = services[name];
-                const builtin = s.builtin ? ' <span class="tag">builtin</span>' : '';
+                const builtin = s.builtin ? ' <span class="tag gray">builtin</span>' : '';
                 html += `<tr>
                     <td><strong>${name}</strong>${builtin}</td>
                     <td>${s.desc || ''}</td>
@@ -268,15 +343,108 @@
         function renderCloudflare(cf) {
             const el = document.getElementById('cloudflare-info');
             if (!cf.domain) {
-                el.innerHTML = '<p class="empty">Non configuré</p>';
+                el.innerHTML = '<p class="empty">Non configure</p>';
                 return;
             }
             el.innerHTML = `<div class="cf-config">
                 <p>Domaine: <span>${cf.domain}</span></p>
-                <p>Fichier env: <span>${cf.env_file || 'non défini'}</span></p>
+                <p>Fichier env: <span>${cf.env_file || 'non defini'}</span></p>
             </div>`;
         }
 
+        function renderRemotes(remotes) {
+            const el = document.getElementById('remotes-list');
+            const keys = Object.keys(remotes).sort();
+            if (keys.length === 0) {
+                el.innerHTML = '<p class="empty">Aucun remote configure. Ajoute un hop distant pour voir ses machines et services.</p>';
+                return;
+            }
+            let html = '<table><tr><th>Nom</th><th>URL</th><th>Statut</th><th></th></tr>';
+            for (const name of keys) {
+                const r = remotes[name];
+                html += `<tr>
+                    <td><strong>${name}</strong></td>
+                    <td>${r.url}</td>
+                    <td><span class="status-dot unknown" id="status-${name}"></span><span id="status-text-${name}">...</span></td>
+                    <td class="actions">
+                        <button onclick="viewRemote('${name}')">Voir</button>
+                        <button class="danger" onclick="deleteRemote('${name}')">Supprimer</button>
+                    </td>
+                </tr>`;
+            }
+            html += '</table>';
+            el.innerHTML = html;
+
+            // Ping each remote
+            for (const name of keys) {
+                pingRemote(name);
+            }
+        }
+
+        async function pingRemote(name) {
+            try {
+                const res = await fetch(API + '/api/remotes/ping/' + name);
+                const data = await res.json();
+                const dot = document.getElementById('status-' + name);
+                const text = document.getElementById('status-text-' + name);
+                if (data.status === 'online') {
+                    dot.className = 'status-dot online';
+                    text.textContent = 'online';
+                } else {
+                    dot.className = 'status-dot offline';
+                    text.textContent = 'offline';
+                }
+            } catch (e) {
+                const dot = document.getElementById('status-' + name);
+                const text = document.getElementById('status-text-' + name);
+                dot.className = 'status-dot offline';
+                text.textContent = 'erreur';
+            }
+        }
+
+        async function viewRemote(name) {
+            const card = document.getElementById('remote-detail-card');
+            const content = document.getElementById('remote-detail-content');
+            const title = document.getElementById('remote-detail-title');
+            card.style.display = 'block';
+            title.textContent = 'Remote: ' + name;
+            content.innerHTML = '<p class="empty">Chargement...</p>';
+
+            try {
+                const res = await fetch(API + '/api/remotes/config/' + name);
+                const cfg = await res.json();
+
+                let html = '';
+
+                const services = cfg.services || {};
+                const skeys = Object.keys(services).sort();
+                if (skeys.length > 0) {
+                    html += '<div class="remote-detail"><h4>Services</h4><table><tr><th>Nom</th><th>Description</th></tr>';
+                    for (const s of skeys) {
+                        const builtin = services[s].builtin ? ' <span class="tag gray">builtin</span>' : '';
+                        html += `<tr><td>${s}${builtin}</td><td>${services[s].desc || ''}</td></tr>`;
+                    }
+                    html += '</table></div>';
+                }
+
+                const machines = cfg.machines || {};
+                const mkeys = Object.keys(machines).sort();
+                if (mkeys.length > 0) {
+                    html += '<div class="remote-detail" style="margin-top:12px"><h4>Machines</h4><table><tr><th>Nom</th><th>Connexion</th></tr>';
+                    for (const m of mkeys) {
+                        const tunnel = machines[m].tunnel ? ' <span class="tag green">tunnel</span>' : '';
+                        html += `<tr><td>${m}</td><td>${machines[m].user}@${machines[m].ip}${tunnel}</td></tr>`;
+                    }
+                    html += '</table></div>';
+                }
+
+                content.innerHTML = html || '<p class="empty">Aucune donnee</p>';
+            } catch (e) {
+                content.innerHTML = '<p class="empty">Impossible de se connecter au remote</p>';
+            }
+        }
+
+        // --- Modals ---
         function openModal(type) {
             document.getElementById(`modal-${type}`).classList.add('active');
             if (type === 'machine') {
@@ -287,13 +455,16 @@
                 document.getElementById('machine-ip').value = '';
                 document.getElementById('machine-user').value = '';
                 document.getElementById('machine-tunnel').value = '';
-            } else {
+            } else if (type === 'service') {
                 document.getElementById('modal-service-title').textContent = 'Ajouter un service';
                 document.getElementById('service-edit-name').value = '';
                 document.getElementById('service-name').value = '';
                 document.getElementById('service-name').disabled = false;
                 document.getElementById('service-cmd').value = '';
                 document.getElementById('service-desc').value = '';
+            } else if (type === 'remote') {
+                document.getElementById('remote-name').value = '';
+                document.getElementById('remote-url').value = '';
             }
         }
 
@@ -301,6 +472,7 @@
             document.getElementById(`modal-${type}`).classList.remove('active');
         }
 
+        // --- Edit ---
         async function editMachine(name) {
             const res = await fetch(API + '/api/config');
             const cfg = await res.json();
@@ -328,19 +500,18 @@
             document.getElementById('modal-service').classList.add('active');
         }
 
+        // --- Save ---
         async function saveMachine() {
             const editName = document.getElementById('machine-edit-name').value;
             const name = editName || document.getElementById('machine-name').value;
-            const data = {
-                name: name,
-                ip: document.getElementById('machine-ip').value,
-                user: document.getElementById('machine-user').value,
-                tunnel: document.getElementById('machine-tunnel').value,
-            };
             await fetch(API + '/api/machines', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data),
+                body: JSON.stringify({
+                    name, ip: document.getElementById('machine-ip').value,
+                    user: document.getElementById('machine-user').value,
+                    tunnel: document.getElementById('machine-tunnel').value,
+                }),
             });
             closeModal('machine');
             loadConfig();
@@ -349,20 +520,31 @@
         async function saveService() {
             const editName = document.getElementById('service-edit-name').value;
             const name = editName || document.getElementById('service-name').value;
-            const data = {
-                name: name,
-                cmd: document.getElementById('service-cmd').value,
-                desc: document.getElementById('service-desc').value,
-            };
             await fetch(API + '/api/services', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data),
+                body: JSON.stringify({
+                    name, cmd: document.getElementById('service-cmd').value,
+                    desc: document.getElementById('service-desc').value,
+                }),
             });
             closeModal('service');
             loadConfig();
         }
 
+        async function saveRemote() {
+            const name = document.getElementById('remote-name').value;
+            const url = document.getElementById('remote-url').value;
+            await fetch(API + '/api/remotes', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name, url}),
+            });
+            closeModal('remote');
+            loadRemotes();
+        }
+
+        // --- Delete ---
         async function deleteMachine(name) {
             if (!confirm(`Supprimer la machine '${name}' ?`)) return;
             await fetch(API + `/api/machines/${name}`, {method: 'DELETE'});
@@ -375,6 +557,13 @@
             loadConfig();
         }
 
+        async function deleteRemote(name) {
+            if (!confirm(`Supprimer le remote '${name}' ?`)) return;
+            await fetch(API + `/api/remotes/${name}`, {method: 'DELETE'});
+            loadRemotes();
+        }
+
+        // --- Init ---
         loadConfig();
     </script>
 </body>

@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -31,17 +30,28 @@ type serviceReq struct {
 	Desc string `json:"desc"`
 }
 
-func Start(port int, open bool) error {
-	mux := http.NewServeMux()
+type remoteReq struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
 
-	// API routes
+func registerAPIRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/ping", handlePing)
 	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/api/machines", handleMachines)
 	mux.HandleFunc("/api/machines/", handleMachineDelete)
 	mux.HandleFunc("/api/services", handleServices)
 	mux.HandleFunc("/api/services/", handleServiceDelete)
+	mux.HandleFunc("/api/remotes", handleRemotes)
+	mux.HandleFunc("/api/remotes/", handleRemoteDelete)
+	mux.HandleFunc("/api/remotes/ping/", handleRemotePing)
+	mux.HandleFunc("/api/remotes/config/", handleRemoteConfig)
+}
 
-	// Static files
+func Start(port int, open bool) error {
+	mux := http.NewServeMux()
+	registerAPIRoutes(mux)
+
 	staticFS, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", http.FileServer(http.FS(staticFS)))
 
@@ -61,6 +71,20 @@ func Start(port int, open bool) error {
 	return http.Serve(listener, mux)
 }
 
+func StartAPI(port int) error {
+	mux := http.NewServeMux()
+	registerAPIRoutes(mux)
+
+	addr := fmt.Sprintf(":%d", port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("port %d déjà utilisé: %w", port, err)
+	}
+
+	fmt.Printf("→ API hop sur le port %d\n", port)
+	return http.Serve(listener, mux)
+}
+
 func openBrowser(url string) {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -74,6 +98,11 @@ func openBrowser(url string) {
 	if cmd != nil {
 		cmd.Start()
 	}
+}
+
+func handlePing(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"status":"ok","version":"0.1.0"}`)
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -213,7 +242,118 @@ func handleServiceDelete(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"ok":true}`)
 }
 
-func init() {
-	// Suppress unused import
-	_ = os.Stderr
+func handleRemotes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	var req remoteReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	if cfg.Remotes == nil {
+		cfg.Remotes = make(map[string]config.Remote)
+	}
+
+	cfg.Remotes[req.Name] = config.Remote{URL: req.URL}
+
+	if err := cfg.Save(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.WriteHeader(200)
+	fmt.Fprintf(w, `{"ok":true}`)
+}
+
+func handleRemoteDelete(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/remotes/")
+	if r.Method != "DELETE" || path == "" {
+		http.Error(w, "Method not allowed", 405)
+		return
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	delete(cfg.Remotes, path)
+
+	if err := cfg.Save(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	w.WriteHeader(200)
+	fmt.Fprintf(w, `{"ok":true}`)
+}
+
+func handleRemotePing(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/api/remotes/ping/")
+
+	cfg, err := config.Load()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	remote, ok := cfg.Remotes[name]
+	if !ok {
+		http.Error(w, "Remote not found", 404)
+		return
+	}
+
+	resp, err := http.Get(remote.URL + "/api/ping")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"offline","error":"%s"}`, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	if resp.StatusCode == 200 {
+		fmt.Fprintf(w, `{"status":"online"}`)
+	} else {
+		fmt.Fprintf(w, `{"status":"offline"}`)
+	}
+}
+
+func handleRemoteConfig(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/api/remotes/config/")
+
+	cfg, err := config.Load()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	remote, ok := cfg.Remotes[name]
+	if !ok {
+		http.Error(w, "Remote not found", 404)
+		return
+	}
+
+	resp, err := http.Get(remote.URL + "/api/config")
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	buf := make([]byte, 1024*64)
+	n, _ := resp.Body.Read(buf)
+	w.Write(buf[:n])
 }
