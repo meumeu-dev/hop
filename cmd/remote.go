@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var remoteKey string
+
 var remoteCmd = &cobra.Command{
 	Use:   "remote",
 	Short: "Gère les connexions vers d'autres hop distants",
@@ -35,14 +37,34 @@ var remoteAddCmd = &cobra.Command{
 			cfg.Remotes = make(map[string]config.Remote)
 		}
 
-		cfg.Remotes[name] = config.Remote{URL: url}
+		cfg.Remotes[name] = config.Remote{URL: url, Key: remoteKey}
 
 		if err := cfg.Save(); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
 
-		fmt.Printf("Remote '%s' ajouté (%s)\n", name, url)
+		// Test connection
+		resp, err := http.Get(url + "/api/ping")
+		if err != nil {
+			fmt.Printf("Remote '%s' ajouté (%s) — attention: injoignable\n", name, url)
+			return
+		}
+		resp.Body.Close()
+
+		if remoteKey != "" {
+			// Test auth
+			req, _ := http.NewRequest("GET", url+"/api/config", nil)
+			req.Header.Set("X-Hop-Key", remoteKey)
+			resp, err = http.DefaultClient.Do(req)
+			if err != nil || resp.StatusCode == 401 {
+				fmt.Printf("Remote '%s' ajouté (%s) — attention: clé API invalide\n", name, url)
+				return
+			}
+			resp.Body.Close()
+		}
+
+		fmt.Printf("Remote '%s' ajouté (%s) — connecté\n", name, url)
 	},
 }
 
@@ -72,7 +94,7 @@ var remoteRemoveCmd = &cobra.Command{
 
 var remoteListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "Liste les hop distants",
+	Short: "Liste les hop distants avec statut",
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg, err := config.Load()
 		if err != nil {
@@ -88,19 +110,21 @@ var remoteListCmd = &cobra.Command{
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 		fmt.Println("Remotes:")
 		for name, r := range cfg.Remotes {
-			status := "?"
+			status := "offline"
+			auth := ""
 			resp, err := http.Get(r.URL + "/api/ping")
 			if err == nil {
 				resp.Body.Close()
 				if resp.StatusCode == 200 {
 					status = "online"
-				} else {
-					status = "offline"
 				}
-			} else {
-				status = "offline"
 			}
-			fmt.Fprintf(w, "  %s\t%s\t[%s]\n", name, r.URL, status)
+
+			if r.Key != "" {
+				auth = " [clé configurée]"
+			}
+
+			fmt.Fprintf(w, "  %s\t%s\t[%s]%s\n", name, r.URL, status, auth)
 		}
 		w.Flush()
 	},
@@ -125,12 +149,22 @@ var remoteInfoCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		resp, err := http.Get(remote.URL + "/api/config")
+		req, _ := http.NewRequest("GET", remote.URL+"/api/config", nil)
+		if remote.Key != "" {
+			req.Header.Set("X-Hop-Key", remote.Key)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur connexion à '%s': %v\n", name, err)
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode == 401 {
+			fmt.Fprintf(os.Stderr, "Accès refusé. Clé API invalide pour '%s'.\n", name)
+			os.Exit(1)
+		}
 
 		body, _ := io.ReadAll(resp.Body)
 
@@ -160,6 +194,7 @@ var remoteInfoCmd = &cobra.Command{
 }
 
 func init() {
+	remoteAddCmd.Flags().StringVar(&remoteKey, "key", "", "Clé API du hop distant")
 	remoteCmd.AddCommand(remoteAddCmd)
 	remoteCmd.AddCommand(remoteRemoveCmd)
 	remoteCmd.AddCommand(remoteListCmd)

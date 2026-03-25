@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +15,18 @@ type Config struct {
 	Machines   map[string]Machine  `yaml:"machines"`
 	Services   map[string]Service  `yaml:"services"`
 	Remotes    map[string]Remote   `yaml:"remotes,omitempty"`
+	API        APIConfig           `yaml:"api,omitempty"`
 	Cloudflare CloudflareConfig    `yaml:"cloudflare"`
 }
 
 type Remote struct {
 	URL string `yaml:"url"`
+	Key string `yaml:"key,omitempty"`
+}
+
+type APIConfig struct {
+	Key      string `yaml:"key,omitempty"`
+	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 
 type Machine struct {
@@ -58,6 +67,12 @@ func ExpandPath(path string) string {
 		return home + path[1:]
 	}
 	return path
+}
+
+func GenerateAPIKey() string {
+	bytes := make([]byte, 32)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
 
 func Load() (*Config, error) {
@@ -102,7 +117,7 @@ func Init() error {
 		cfg := &Config{
 			Machines: make(map[string]Machine),
 			Services: map[string]Service{
-				"ssh": {Desc: "Connexion SSH", Builtin: true},
+				"ssh":      {Desc: "Connexion SSH", Builtin: true},
 				"rustdesk": {Desc: "Connexion Rustdesk", Builtin: true},
 			},
 		}
