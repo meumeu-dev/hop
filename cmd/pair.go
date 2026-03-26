@@ -122,17 +122,31 @@ func runPairServer() {
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", response.Hostname)
 	fmt.Println("→ Clé SSH ajoutée")
 
+	// Add remote machine to config
+	cfg, _ := config.Load()
+	if cfg != nil {
+		if err := config.ValidateName(response.Hostname); err == nil {
+			tunnel := ""
+			if cfg.Cloudflare.Domain != "" {
+				tunnel = response.Hostname + "." + cfg.Cloudflare.Domain
+			}
+			cfg.Machines[response.Hostname] = config.Machine{
+				IP:       response.IP,
+				User:     response.User,
+				Tunnel:   tunnel,
+				Services: make(map[string]config.MachineService),
+			}
+			cfg.Save()
+		}
+	}
+
 	// Apply CF domain if received
 	if response.CFDomain != "" {
 		fmt.Printf("→ Domaine Cloudflare: %s\n", response.CFDomain)
 		pairing.ApplyCFConfig(response.CFDomain)
 	}
 
-	fmt.Println()
-	fmt.Println("→ Cette machine est prête !")
-	fmt.Println()
-	fmt.Println("Le PC principal va maintenant transférer les identifiants")
-	fmt.Println("Cloudflare via SSH et configurer le tunnel automatiquement.")
+	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", response.Hostname)
 }
 
 func runPairClient(pairToken string) {
@@ -184,8 +198,10 @@ func runPairClient(pairToken string) {
 	cfg, _ := config.Load()
 
 	user := os.Getenv("USER")
+	localIP := detectLocalIP()
 	response := &pairing.PairData{
 		Hostname:  hostname,
+		IP:        localIP,
 		PublicKey: pubKey,
 		User:      user,
 	}
