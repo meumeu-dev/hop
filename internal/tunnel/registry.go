@@ -79,7 +79,7 @@ func Resolve(machineID string) (string, error) {
 		URL     string `json:"url"`
 		Updated int64  `json:"updated"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&result); err != nil {
 		return "", err
 	}
 

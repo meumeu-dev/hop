@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,8 @@ func newRelayStore() *relayStore {
 	}
 }
 
+const maxTunnels = 500
+
 func (s *relayStore) cleanup() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,7 +56,7 @@ func (s *relayStore) cleanup() {
 		}
 	}
 	for id, t := range s.tunnels {
-		if now.Sub(t.CreatedAt) > 2*time.Minute {
+		if now.Sub(t.CreatedAt) > 1*time.Hour {
 			delete(s.tunnels, id)
 		}
 	}
@@ -78,6 +81,8 @@ func generateID() string {
 
 const maxBodySize = 1 << 20 // 1MB
 const maxPairs = 1000
+
+var validMachineID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 func (s *relayStore) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -262,6 +267,11 @@ func (s *relayStore) handleTunnelRegister(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
+	if len(s.tunnels) >= maxTunnels {
+		s.mu.Unlock()
+		http.Error(w, "Too many tunnels", http.StatusTooManyRequests)
+		return
+	}
 	s.tunnels[machineID] = &tunnelEntry{
 		URL:       body.URL,
 		TokenHash: tokenHash,
@@ -356,7 +366,7 @@ var serverCmd = &cobra.Command{
 		// POST/GET /tunnel/:machine_id
 		mux.HandleFunc("/tunnel/", func(w http.ResponseWriter, r *http.Request) {
 			machineID := strings.TrimPrefix(r.URL.Path, "/tunnel/")
-			if machineID == "" {
+			if machineID == "" || !validMachineID.MatchString(machineID) {
 				http.Error(w, "Not found", http.StatusNotFound)
 				return
 			}
