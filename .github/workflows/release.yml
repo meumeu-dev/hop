@@ -53,13 +53,31 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          echo "Previous tag: $PREV_TAG"
+          # Generate changelog from commit messages (skip Co-Authored-By lines)
+          CHANGES=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s" --no-merges | grep -v "Co-Authored-By" | head -30)
+          # Write to file for multiline
+          echo "$CHANGES" > /tmp/changelog.md
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: /tmp/changelog.md

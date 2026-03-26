@@ -231,11 +231,23 @@ func formatChangelog(body string) string {
 		if line == "" {
 			continue
 		}
-		out = append(out, "  "+line)
+		// Skip markdown link lines like "**Full Changelog**: https://..."
+		if strings.Contains(line, "**Full Changelog**") {
+			continue
+		}
+		// Clean up "- " prefix, add our own formatting
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.TrimPrefix(line, "* ")
+		if line != "" {
+			out = append(out, "  • "+line)
+		}
 	}
-	if len(out) > 20 {
-		out = out[:20]
-		out = append(out, "  ...")
+	if len(out) > 15 {
+		out = out[:15]
+		out = append(out, fmt.Sprintf("  ... et %d autres changements", len(lines)-15))
+	}
+	if len(out) == 0 {
+		return ""
 	}
 	return strings.Join(out, "\n")
 }
