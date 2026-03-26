@@ -74,26 +74,60 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Atomic replace
+		// Try writing to a temp file next to the binary
 		tmpPath := execPath + ".new"
 		if err := os.WriteFile(tmpPath, data, 0755); err != nil {
+			if os.IsPermission(err) {
+				// Write to /tmp then sudo mv
+				tmpPath = "/tmp/hop.new"
+				if err := os.WriteFile(tmpPath, data, 0755); err != nil {
+					fmt.Fprintf(os.Stderr, "Erreur ecriture: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println("→ Installation (sudo)...")
+				mvCmd := exec.Command("sudo", "mv", tmpPath, execPath)
+				mvCmd.Stdin = os.Stdin
+				mvCmd.Stdout = os.Stdout
+				mvCmd.Stderr = os.Stderr
+				if err := mvCmd.Run(); err != nil {
+					os.Remove(tmpPath)
+					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("→ hop mis a jour en %s\n", latest)
+				return
+			}
 			fmt.Fprintf(os.Stderr, "Erreur ecriture: %v\n", err)
 			os.Exit(1)
 		}
 
+		// Normal atomic replace
 		oldPath := execPath + ".old"
 		os.Remove(oldPath)
 
 		if err := os.Rename(execPath, oldPath); err != nil {
 			os.Remove(tmpPath)
-			fmt.Fprintf(os.Stderr, "Erreur: impossible de remplacer le binaire: %v\n", err)
-			fmt.Fprintln(os.Stderr, "Essaie avec sudo: sudo hop update")
+			if os.IsPermission(err) {
+				// Fallback: sudo mv
+				fmt.Println("→ Installation (sudo)...")
+				mvCmd := exec.Command("sudo", "bash", "-c", fmt.Sprintf("mv %s %s.old 2>/dev/null; mv %s %s", execPath, execPath, tmpPath, execPath))
+				mvCmd.Stdin = os.Stdin
+				mvCmd.Stdout = os.Stdout
+				mvCmd.Stderr = os.Stderr
+				if err := mvCmd.Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("→ hop mis a jour en %s\n", latest)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
 
 		if err := os.Rename(tmpPath, execPath); err != nil {
 			os.Rename(oldPath, execPath)
-			fmt.Fprintf(os.Stderr, "Erreur: impossible de remplacer le binaire: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
 
