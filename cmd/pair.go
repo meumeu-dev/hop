@@ -16,6 +16,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var pairLAN bool
+var pairGist bool
+
 var pairCmd = &cobra.Command{
 	Use:   "pair [token]",
 	Short: "Appaire cette machine avec un autre hop",
@@ -23,7 +26,10 @@ var pairCmd = &cobra.Command{
 Avec un token: se connecte à la machine en attente (mode client).
 
 Le token est affiché par 'hop pair' sur l'autre machine.
-Format: <pair_id>.<code>.<token>`,
+Formats:
+  Worker:  <pair_id>.<code>.<token>
+  LAN:     <code> (6 chiffres)
+  Gist:    gist:<gist_id>.<code>`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
@@ -34,7 +40,7 @@ Format: <pair_id>.<code>.<token>`,
 	},
 }
 
-func runPairServer() {
+func buildPairData() (string, *pairing.PairData) {
 	hostname, _ := os.Hostname()
 
 	if err := config.ValidateName(hostname); err != nil {
@@ -56,7 +62,6 @@ func runPairServer() {
 
 	code := pairing.GenerateCode()
 
-	// Read host key for SSH pinning
 	hostKey := ""
 	hostKeyData, err := os.ReadFile("/etc/ssh/ssh_host_ed25519_key.pub")
 	if err == nil {
@@ -71,6 +76,89 @@ func runPairServer() {
 		HostKey:   hostKey,
 	}
 
+	return code, data
+}
+
+func runPairServer() {
+	code, data := buildPairData()
+
+	if pairLAN {
+		runPairServerLAN(code, data)
+		return
+	}
+	if pairGist {
+		runPairServerGist(code, data)
+		return
+	}
+
+	// Default: try LAN first (3s), then fall back to worker
+	fmt.Println("→ Recherche sur le réseau local...")
+	response, err := pairing.StartLANServerWithTimeout(code, data, 3*time.Second)
+	if err == nil {
+		finalizePairServer(response, code, data)
+		return
+	}
+
+	fmt.Println("→ Pas de réponse LAN, bascule sur le relay...")
+	runPairServerWorker(code, data)
+}
+
+func runPairServerLAN(code string, data *pairing.PairData) {
+	fmt.Println("→ Mode LAN activé")
+	fmt.Println()
+	fmt.Println("Sur l'autre machine (même réseau), lance:")
+	fmt.Printf("  hop pair %s\n", code)
+
+	if err := copyToClipboard(code); err == nil {
+		fmt.Println()
+		fmt.Println("(aussi copié dans le presse-papier)")
+	}
+	fmt.Println()
+	fmt.Println("En attente de connexion LAN... (expire dans 2 min)")
+
+	response, err := pairing.StartLANServer(code, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	finalizePairServer(response, code, data)
+}
+
+func runPairServerGist(code string, data *pairing.PairData) {
+	fmt.Println("→ Mode GitHub Gist activé")
+	fmt.Println("→ Création du gist...")
+
+	gistID, err := pairing.PublishGist(code, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+	defer pairing.CleanupGist(gistID)
+
+	pairToken := "gist:" + gistID + "." + code
+
+	fmt.Println()
+	fmt.Println("Sur l'autre machine, lance:")
+	fmt.Printf("  hop pair %s\n", pairToken)
+
+	if err := copyToClipboard(pairToken); err == nil {
+		fmt.Println()
+		fmt.Println("(aussi copié dans le presse-papier)")
+	}
+	fmt.Println()
+	fmt.Println("En attente de réponse via gist... (expire dans 2 min)")
+
+	response, err := pairing.WaitGistResponse(gistID, code, 2*time.Minute)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	finalizePairServer(response, code, data)
+}
+
+func runPairServerWorker(code string, data *pairing.PairData) {
 	fmt.Println("→ Enregistrement sur le serveur de pairing...")
 	session, err := pairing.PublishPairData(code, data)
 	if err != nil {
@@ -85,10 +173,9 @@ func runPairServer() {
 	fmt.Println("Sur l'autre machine, lance:")
 	fmt.Printf("  hop pair %s\n", pairToken)
 
-	// Try to copy to clipboard too
 	if err := copyToClipboard(pairToken); err == nil {
 		fmt.Println()
-		fmt.Println("(aussi copie dans le presse-papier)")
+		fmt.Println("(aussi copié dans le presse-papier)")
 	}
 	fmt.Println()
 	fmt.Println("En attente de connexion... (expire dans 2 min)")
@@ -98,6 +185,11 @@ func runPairServer() {
 		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
 		os.Exit(1)
 	}
+
+	finalizePairServer(response, code, data)
+}
+
+func finalizePairServer(response *pairing.PairData, code string, data *pairing.PairData) {
 
 	fmt.Println()
 	fmt.Printf("→ Machine distante: %s\n", response.Hostname)
@@ -170,7 +262,125 @@ func runPairServer() {
 }
 
 func runPairClient(pairToken string) {
-	// Parse: pairID.code.token
+	// Detect token format:
+	// - "gist:<gist_id>.<code>" → Gist mode
+	// - "<6digits>" → LAN mode
+	// - "<pair_id>.<code>.<token>" → Worker mode
+	if strings.HasPrefix(pairToken, "gist:") {
+		runPairClientGist(pairToken)
+		return
+	}
+
+	// Check if it's a 6-digit code (LAN mode)
+	if len(pairToken) == 6 && isDigits(pairToken) {
+		runPairClientLAN(pairToken)
+		return
+	}
+
+	// Worker mode: pairID.code.token
+	runPairClientWorker(pairToken)
+}
+
+func isDigits(s string) bool {
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func buildClientResponse() (string, *pairing.PairData) {
+	hostname, _ := os.Hostname()
+
+	_, pubKey, err := pairing.EnsureSSHKey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur génération clé SSH: %v\n", err)
+		os.Exit(1)
+	}
+
+	user := os.Getenv("USER")
+	localIP := detectLocalIP()
+	response := &pairing.PairData{
+		Hostname:  hostname,
+		IP:        localIP,
+		PublicKey: pubKey,
+		User:      user,
+	}
+
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.Cloudflare.Domain != "" {
+		response.CFDomain = cfg.Cloudflare.Domain
+	}
+
+	return hostname, response
+}
+
+func runPairClientLAN(code string) {
+	fmt.Println("→ Mode LAN: écoute des broadcasts...")
+
+	_, response := buildClientResponse()
+
+	serverData, err := pairing.ConnectLAN(code, response)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	finalizePairClient(serverData)
+}
+
+func runPairClientGist(pairToken string) {
+	// Parse gist:<gist_id>.<code>
+	rest := strings.TrimPrefix(pairToken, "gist:")
+	parts := strings.SplitN(rest, ".", 2)
+	if len(parts) != 2 {
+		fmt.Fprintln(os.Stderr, "Token gist invalide. Format: gist:<gist_id>.<code>")
+		os.Exit(1)
+	}
+
+	gistID := parts[0]
+	code := parts[1]
+
+	fmt.Println("→ Mode Gist: récupération des données...")
+
+	serverData, err := pairing.FetchGist(gistID, code)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := config.ValidateName(serverData.Hostname); err != nil {
+		fmt.Fprintf(os.Stderr, "Hostname distant invalide: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("→ Machine trouvée: %s (%s@%s)\n", serverData.Hostname, serverData.User, serverData.IP)
+	if parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(serverData.PublicKey)); err == nil {
+		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("\nAccepter ce pairing ? [o/N]: ")
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+		fmt.Println("Pairing annulé.")
+		os.Exit(0)
+	}
+
+	_, response := buildClientResponse()
+
+	fmt.Println("→ Envoi de la réponse via gist...")
+	if err := pairing.PostGistResponse(gistID, code, response); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	finalizePairClient(serverData)
+}
+
+func runPairClientWorker(pairToken string) {
 	parts := strings.SplitN(pairToken, ".", 3)
 	if len(parts) != 3 {
 		fmt.Fprintln(os.Stderr, "Token invalide. Copie le token complet affiché par 'hop pair'.")
@@ -180,14 +390,6 @@ func runPairClient(pairToken string) {
 	pairID := parts[0]
 	code := parts[1]
 	token := parts[2]
-
-	hostname, _ := os.Hostname()
-
-	_, pubKey, err := pairing.EnsureSSHKey()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur génération clé SSH: %v\n", err)
-		os.Exit(1)
-	}
 
 	fmt.Println("→ Récupération des données de pairing...")
 	serverData, err := pairing.FetchPairData(pairID, code)
@@ -215,19 +417,7 @@ func runPairClient(pairToken string) {
 		os.Exit(0)
 	}
 
-	cfg, _ := config.Load()
-
-	user := os.Getenv("USER")
-	localIP := detectLocalIP()
-	response := &pairing.PairData{
-		Hostname:  hostname,
-		IP:        localIP,
-		PublicKey: pubKey,
-		User:      user,
-	}
-	if cfg != nil && cfg.Cloudflare.Domain != "" {
-		response.CFDomain = cfg.Cloudflare.Domain
-	}
+	_, response := buildClientResponse()
 
 	session := &pairing.PairSession{
 		PairID: pairID,
@@ -240,10 +430,16 @@ func runPairClient(pairToken string) {
 		os.Exit(1)
 	}
 
+	finalizePairClient(serverData)
+}
+
+func finalizePairClient(serverData *pairing.PairData) {
 	if err := pairing.AddAuthorizedKey(serverData.PublicKey); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur ajout clé SSH: %v\n", err)
 		os.Exit(1)
 	}
+
+	cfg, _ := config.Load()
 
 	// Add machine to config
 	tunnel := ""
@@ -284,7 +480,7 @@ func runPairClient(pairToken string) {
 	fmt.Println(")")
 
 	// Transfer CF credentials via SSH and setup tunnel
-	if cfg.Cloudflare.Domain != "" {
+	if cfg != nil && cfg.Cloudflare.Domain != "" {
 		cfEmail, cfAPIKey := pairing.LoadCFCredentials()
 		if cfAPIKey != "" {
 			fmt.Println()
@@ -466,5 +662,7 @@ func extractTunnelID(jsonOutput string) string {
 }
 
 func init() {
+	pairCmd.Flags().BoolVar(&pairLAN, "lan", false, "Force le pairing en mode LAN (broadcast UDP)")
+	pairCmd.Flags().BoolVar(&pairGist, "gist", false, "Force le pairing via GitHub Gist")
 	rootCmd.AddCommand(pairCmd)
 }

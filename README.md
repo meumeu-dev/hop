@@ -16,29 +16,18 @@ curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | b
 hop update
 ```
 
-### Build depuis les sources
-
-```bash
-go build -ldflags "-X main.Version=v1.1.0" -o hop .
-```
-
 ## Demarrage rapide
 
 ```bash
 # Initialiser hop
 hop init
 
-# Ajouter une machine
-hop add machine pc1 192.168.0.10 --user freelux
+# Pairer deux machines (meme reseau)
+hop pair          # machine A — affiche un code
+hop pair 123456   # machine B — entre le code
 
-# Se connecter en SSH
-hop ssh pc1
-
-# Ajouter un service
-hop add service code --cmd "code ." --desc "VS Code"
-
-# Lancer un service sur une machine
-hop code pc1
+# Se connecter
+hop ssh rpi
 ```
 
 ## Commandes
@@ -50,118 +39,140 @@ hop code pc1
 | `hop add machine <nom> <ip>` | Ajoute une machine |
 | `hop add service <nom> --cmd <cmd>` | Ajoute un service |
 | `hop remove <nom>` | Supprime une machine ou service |
+| `hop rename <ancien> <nouveau>` | Renomme une machine ou service |
+| `hop alias add <alias> <cible>` | Cree un raccourci |
 | `hop ping [machine]` | Verifie l'etat des machines |
 | `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
 | `hop pair` | Pairing securise entre machines |
-| `hop tunnel setup` | Configure un Cloudflare Tunnel |
-| `hop sync` | Synchronise la config via git |
+| `hop tunnel quick` | Tunnel temporaire (zero config CF) |
+| `hop tunnel setup` | Configure un Cloudflare Tunnel permanent |
+| `hop server` | Lance un relay de pairing self-hosted |
+| `hop worker deploy` | Deploie ton propre worker CF |
+| `hop worker url [url]` | Configure l'URL du worker |
 | `hop dashboard` | Lance le dashboard web |
 | `hop api` | Active l'API REST |
 | `hop remote add <nom> <url>` | Ajoute un hop distant |
 | `hop version` | Affiche la version |
 | `hop update` | Met a jour hop |
+| `hop reset` | Remet la config a zero |
+| `hop uninstall` | Supprime hop completement |
 | `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
 
-## Fonctionnalites
+## Pairing
 
-### Connexion intelligente
-Hop detecte automatiquement si une machine est joignable en LAN. Si non, il passe par le Cloudflare Tunnel configure.
+Le pairing connecte deux machines de maniere securisee. 3 modes disponibles :
 
-### Pairing zero-config
+### LAN (par defaut si meme reseau)
 ```bash
-# Sur la machine serveur:
+# Machine A:
 hop pair
-# -> Affiche un code a 6 chiffres
+# → Recherche sur le reseau local...
+# → Code: 123456
 
-# Sur la nouvelle machine:
-hop pair <code>
-# -> Echange de cles SSH + config tunnel automatique
+# Machine B:
+hop pair 123456
+```
+Aucun internet requis. Broadcast UDP + echange direct.
+
+### Worker relay (par defaut si pas en LAN)
+```bash
+# Machine A:
+hop pair
+# → Bascule sur le relay...
+# → Token: abc123.456789.xyz...
+
+# Machine B:
+hop pair abc123.456789.xyz...
+```
+Utilise un relay Cloudflare Worker chiffre E2E. Le relay ne voit jamais les donnees en clair.
+
+### GitHub Gist (sans worker)
+```bash
+# Machine A:
+hop pair --gist
+# → Token: gist:abc123def.456789
+
+# Machine B:
+hop pair gist:abc123def.456789
+```
+Utilise un Gist GitHub prive comme relay. Necessite `gh` CLI.
+
+### Securite
+- Chiffrement AES-GCM avec derivation Argon2id (64MB, 3 iterations)
+- Echange de cles SSH ed25519
+- Verification d'empreinte SSH des deux cotes
+- Confirmation manuelle requise
+
+## Connexion intelligente
+
+Hop detecte automatiquement le meilleur chemin :
+1. **LAN** — ping direct sur le port SSH
+2. **Tunnel configure** — Cloudflare Tunnel permanent
+3. **Tunnel dynamique** — resolution via le worker (trycloudflare)
+
+## Tunnels
+
+### Tunnel temporaire (zero config)
+```bash
+hop tunnel quick
+# → Lance un tunnel trycloudflare, enregistre l'URL sur le worker
+# → Les autres machines resolvent automatiquement
+```
+Aucun compte Cloudflare requis.
+
+### Tunnel permanent
+Necessite un compte Cloudflare (gratuit) + un domaine. Voir la section [Cloudflare setup](#prerequis-pour-les-tunnels-permanents).
+
+## Self-hosted relay
+
+Pour ceux qui ne veulent pas utiliser le worker par defaut :
+
+```bash
+# Option 1: deployer son propre worker CF (gratuit)
+hop worker deploy
+
+# Option 2: relay standalone (sur un VPS, raspi, etc.)
+hop server --port 8899
+
+# Configurer l'URL
+hop worker url https://mon-relay.example.com:8899
 ```
 
-Le pairing utilise un chiffrement AES-GCM avec derivation Argon2id. Le relay Cloudflare Worker ne voit jamais les donnees en clair.
+## Services & Tmux
 
-### Tmux
 ```bash
+# Ajouter un service
+hop add service code --cmd "code ." --desc "VS Code"
+hop code pc1
+
 # Lancer dans tmux
 hop code pc1 --tmux --session dev
-
-# Ou configurer par defaut
-hop add service code --cmd "claude" --tmux
 ```
 
-### Dashboard & API
-```bash
-# Dashboard web local
-hop dashboard
-
-# API pour federation multi-machines
-hop api --port 9090
-hop remote add bureau https://bureau.example.com:9090 --key <cle>
-```
-
-### Autocompletion
-```bash
-# Bash
-source <(hop completion bash)
-
-# Zsh
-source <(hop completion zsh)
-```
-
-## Prerequis pour les tunnels
-
-Les tunnels Cloudflare permettent d'acceder a tes machines depuis n'importe ou, sans ouvrir de port. C'est optionnel — hop marche en LAN sans Cloudflare.
-
-### 1. Creer un compte Cloudflare
-
-Inscris-toi sur [dash.cloudflare.com](https://dash.cloudflare.com). C'est gratuit.
-
-### 2. Ajouter un domaine
-
-- Va dans **Websites** > **Add a site**
-- Entre ton domaine (ex: `mondomaine.dev`)
-- Choisis le plan **Free**
-- Cloudflare te donne 2 nameservers (ex: `anna.ns.cloudflare.com`)
-- Va chez ton registrar (OVH, Gandi, Namecheap...) et remplace les NS par ceux de Cloudflare
-- Attends la propagation (quelques minutes a 24h)
-
-### 3. Recuperer le token API
-
-- Va dans [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens)
-- Clique **Create Token**
-- Utilise le template **Edit zone DNS** :
-  - Permissions : `Zone > DNS > Edit`
-  - Zone Resources : `Include > Specific zone > ton domaine`
-- Clique **Continue to summary** > **Create Token**
-- Copie le token (il ne sera plus affiche)
-
-### 4. Recuperer le Account ID
-
-- Va sur ta zone (clique sur ton domaine dans le dashboard)
-- L'**Account ID** est dans la colonne de droite, section **API**
-- Copie-le
-
-### 5. Configurer hop
+## Dashboard & API
 
 ```bash
-hop init
-# -> Entre ton domaine quand demande
-
-# Ou via le dashboard
-hop dashboard
-# -> Onglet Cloudflare, entre domaine + email + token API
+hop dashboard           # Interface web locale
+hop api --port 9090     # API REST pour federation
 ```
 
-Cree un fichier `~/.hop/cloudflare.env` :
+## Alias
 
-```
-CF_USER=ton@email.com
-CF_DOMAIN=mondomaine.dev
-CF_API_KEY=ton-token-ici
-CF_ACCOUNT_ID=ton-account-id
+```bash
+hop alias add rpi raspberrypi
+hop ssh rpi     # → se connecte a raspberrypi
 ```
 
-Hop gere ensuite automatiquement la creation des tunnels, le DNS et l'installation de cloudflared. Chaque machine aura un hostname type `mon-pc.mondomaine.dev` et hop bascule entre LAN et tunnel selon la disponibilite.
+## Prerequis pour les tunnels permanents
+
+Les tunnels Cloudflare permettent d'acceder a tes machines depuis n'importe ou, sans ouvrir de port. C'est optionnel.
+
+1. Compte Cloudflare gratuit sur [dash.cloudflare.com](https://dash.cloudflare.com)
+2. Domaine ajoute dans Cloudflare (plan Free)
+3. Token API : [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → template "Edit zone DNS"
+4. Configurer dans hop : `hop init` ou `hop dashboard`
+
+Hop gere automatiquement la creation des tunnels, le DNS et cloudflared.
 
 ## Config
 
