@@ -1,8 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -131,15 +129,8 @@ func ExpandPath(path string) string {
 	return cleaned
 }
 
-func GenerateAPIKey() string {
-	bytes := make([]byte, 32)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
-}
-
 // Secrets stored separately from config (gitignored)
 type Secrets struct {
-	APIKey string `yaml:"api_key,omitempty"`
 }
 
 func LoadSecrets() (*Secrets, error) {
@@ -211,7 +202,7 @@ func (c *Config) Save() error {
 
 func Init() error {
 	dir := HopDir()
-	dirs := []string{dir, filepath.Join(dir, "dotfiles")}
+	dirs := []string{dir}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0700); err != nil {
 			return err

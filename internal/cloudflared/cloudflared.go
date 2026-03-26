@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/meumeu-dev/hop/internal/config"
 )
@@ -52,7 +53,8 @@ func Install() error {
 	fmt.Printf("→ Téléchargement de cloudflared (%s)...\n", arch)
 
 	// Download binary
-	resp, err := http.Get(binaryURL)
+	httpClient := &http.Client{Timeout: 120 * time.Second}
+	resp, err := httpClient.Get(binaryURL)
 	if err != nil {
 		return fmt.Errorf("erreur téléchargement: %w", err)
 	}

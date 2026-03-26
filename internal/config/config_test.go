@@ -115,18 +115,6 @@ func TestValidateRustdeskID(t *testing.T) {
 	}
 }
 
-func TestGenerateAPIKey(t *testing.T) {
-	key1 := GenerateAPIKey()
-	key2 := GenerateAPIKey()
-
-	if len(key1) != 64 { // 32 bytes hex = 64 chars
-		t.Errorf("GenerateAPIKey() len = %d, want 64", len(key1))
-	}
-	if key1 == key2 {
-		t.Error("GenerateAPIKey() generated two identical keys")
-	}
-}
-
 func TestExpandPath(t *testing.T) {
 	p := ExpandPath("~/.hop")
 	if p == "~/.hop" {

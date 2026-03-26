@@ -13,10 +13,6 @@ func SetVersion(v string) {
 	version = v
 }
 
-func GetVersion() string {
-	return version
-}
-
 var checkUpdate bool
 
 var versionCmd = &cobra.Command{

@@ -58,8 +58,8 @@ var dashboardCmd = &cobra.Command{
 			fmt.Print("Mot de passe pour le dashboard: ")
 			pw, _ := reader.ReadString('\n')
 			dashPassword = strings.TrimSpace(pw)
-			if len(dashPassword) < 4 {
-				fmt.Fprintln(os.Stderr, "Mot de passe requis pour l'acces reseau (min 4 caracteres)")
+			if len(dashPassword) < 8 {
+				fmt.Fprintln(os.Stderr, "Mot de passe requis pour l'acces reseau (min 8 caracteres)")
 				os.Exit(1)
 			}
 			fmt.Println()

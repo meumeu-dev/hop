@@ -168,7 +168,7 @@ func ConnectLAN(code string, data *PairData) (*PairData, error) {
 			return nil, err
 		}
 
-		tcpAddr := fmt.Sprintf("%s:%d", remoteAddr.IP.String(), lanTCPPort)
+		tcpAddr := net.JoinHostPort(remoteAddr.IP.String(), fmt.Sprintf("%d", lanTCPPort))
 		tcpConn, err := net.DialTimeout("tcp", tcpAddr, 5*time.Second)
 		if err != nil {
 			return nil, fmt.Errorf("erreur connexion TCP vers %s: %w", tcpAddr, err)
