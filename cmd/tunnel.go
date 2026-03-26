@@ -217,10 +217,12 @@ var tunnelQuickCmd = &cobra.Command{
 		if tunnelProvider == "" {
 			reader := bufio.NewReader(os.Stdin)
 			fmt.Println("Provider de tunnel:")
-			fmt.Println("  1) trycloudflare (auto-install cloudflared)")
-			fmt.Println("  2) localhost.run (zero install, via SSH)")
-			fmt.Println("  3) serveo.net   (zero install, via SSH)")
-			fmt.Println("  4) bore.pub     (auto-install bore)")
+			fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
+			fmt.Println("  2) localhost.run  (zero install, via SSH)")
+			fmt.Println("  3) serveo.net    (zero install, via SSH)")
+			fmt.Println("  4) bore.pub      (auto-install bore)")
+			fmt.Println("  5) Cloudflare    (tunnel permanent, necessite compte CF)")
+			fmt.Println("  6) Worker perso  (configurer ton propre relay)")
 			fmt.Print("Choix [1]: ")
 			choice, _ := reader.ReadString('\n')
 			choice = strings.TrimSpace(choice)
@@ -231,6 +233,10 @@ var tunnelQuickCmd = &cobra.Command{
 				tunnelProvider = "serveo.net"
 			case "4", "bore":
 				tunnelProvider = "bore"
+			case "5", "cloudflare", "cf":
+				tunnelProvider = "cloudflare"
+			case "6", "worker":
+				tunnelProvider = "worker"
 			default:
 				tunnelProvider = "trycloudflare"
 			}
@@ -246,6 +252,10 @@ var tunnelQuickCmd = &cobra.Command{
 			runTunnelSSH("serveo.net", "ssh", "-R", "0:localhost:22", "serveo.net")
 		case "bore":
 			runTunnelBore()
+		case "cloudflare":
+			runTunnelCFPermanent()
+		case "worker":
+			runTunnelWorkerSetup()
 		default:
 			fmt.Fprintf(os.Stderr, "Provider inconnu: %s\n", tunnelProvider)
 			os.Exit(1)
@@ -487,8 +497,77 @@ func findOrInstallBore() string {
 	return borePath
 }
 
+func runTunnelCFPermanent() {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg.Cloudflare.Domain == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Domaine Cloudflare (ex: mondomaine.dev): ")
+		domain, _ := reader.ReadString('\n')
+		domain = strings.TrimSpace(domain)
+		if domain == "" {
+			fmt.Fprintln(os.Stderr, "Domaine requis pour un tunnel permanent.")
+			fmt.Fprintln(os.Stderr, "Pas de domaine ? Utilise trycloudflare (option 1) a la place.")
+			os.Exit(1)
+		}
+		cfg.Cloudflare.Domain = domain
+		cfg.Save()
+	}
+
+	// Delegate to tunnel setup
+	fmt.Println("→ Configuration du tunnel Cloudflare permanent...")
+	hopBin, _ := os.Executable()
+	setupCmd := exec.Command(hopBin, "tunnel", "setup")
+	setupCmd.Stdout = os.Stdout
+	setupCmd.Stderr = os.Stderr
+	setupCmd.Stdin = os.Stdin
+	setupCmd.Run()
+}
+
+func runTunnelWorkerSetup() {
+	fmt.Println("→ Configuration du worker perso")
+	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  1) Deployer un worker sur ton compte Cloudflare (gratuit)")
+	fmt.Println("  2) Configurer l'URL d'un worker/relay existant")
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Choix [1]: ")
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+
+	if choice == "2" {
+		fmt.Print("URL du worker (https://...): ")
+		url, _ := reader.ReadString('\n')
+		url = strings.TrimSpace(url)
+		if url == "" || !strings.HasPrefix(url, "https://") {
+			fmt.Fprintln(os.Stderr, "URL invalide (doit commencer par https://)")
+			os.Exit(1)
+		}
+		cfg, _ := config.Load()
+		if cfg != nil {
+			cfg.WorkerURL = url
+			cfg.Save()
+			fmt.Printf("→ Worker configure: %s\n", url)
+		}
+		return
+	}
+
+	// Deploy worker
+	hopBin, _ := os.Executable()
+	deployCmd := exec.Command(hopBin, "worker", "deploy")
+	deployCmd.Stdout = os.Stdout
+	deployCmd.Stderr = os.Stderr
+	deployCmd.Stdin = os.Stdin
+	deployCmd.Run()
+}
+
 func init() {
-	tunnelQuickCmd.Flags().StringVarP(&tunnelProvider, "provider", "p", "", "Provider: trycloudflare, localhost.run, serveo.net, bore")
+	tunnelQuickCmd.Flags().StringVarP(&tunnelProvider, "provider", "p", "", "Provider: trycloudflare, localhost.run, serveo.net, bore, cloudflare, worker")
 	tunnelCmd.AddCommand(tunnelSetupCmd)
 	tunnelCmd.AddCommand(tunnelStatusCmd)
 	tunnelCmd.AddCommand(tunnelQuickCmd)
