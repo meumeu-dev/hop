@@ -212,13 +212,13 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 	target := server.User + "@" + server.IP
 	hopKeyPath := config.HopDir() + "/keys/hop_ed25519"
 
-	// Transfer CF env file via SSH using hop's key
+	// Transfer CF env file via SSH using stdin (no shell injection)
 	envContent := pairing.BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain)
-	remoteCmd := fmt.Sprintf("mkdir -p ~/.hop && printf '%%s' '%s' > ~/.hop/cloudflare.env && chmod 600 ~/.hop/cloudflare.env",
-		strings.ReplaceAll(envContent, "'", "'\\''"))
 
 	fmt.Printf("  → Envoi vers %s...\n", target)
-	sshCmd := exec.Command("ssh", "-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new", target, "--", "bash", "-c", remoteCmd)
+	sshCmd := exec.Command("ssh", "-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new", target, "--",
+		"bash", "-c", "mkdir -p ~/.hop && cat > ~/.hop/cloudflare.env && chmod 600 ~/.hop/cloudflare.env")
+	sshCmd.Stdin = strings.NewReader(envContent)
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
 	if err := sshCmd.Run(); err != nil {

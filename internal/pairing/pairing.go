@@ -24,6 +24,8 @@ import (
 
 const WorkerURL = "https://hop-pair.meumeudev.workers.dev"
 
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
 // PairData is what gets encrypted and sent through the worker
 type PairData struct {
 	Hostname  string `json:"hostname"`
@@ -198,7 +200,7 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 	}
 
 	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
-	resp, err := http.Post(WorkerURL+"/pair", "application/json", strings.NewReader(body))
+	resp, err := httpClient.Post(WorkerURL+"/pair", "application/json", strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
 	}
@@ -225,7 +227,7 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 
 // FetchPairData retrieves and decrypts pair data from the worker
 func FetchPairData(pairID string, code string) (*PairData, error) {
-	resp, err := http.Get(WorkerURL + "/pair/" + pairID)
+	resp, err := httpClient.Get(WorkerURL + "/pair/" + pairID)
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion: %w", err)
 	}
@@ -275,7 +277,7 @@ func SendResponse(session *PairSession, data *PairData) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Pair-Token", session.Token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -298,7 +300,7 @@ func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, er
 		req, _ := http.NewRequest("GET", WorkerURL+"/pair/"+session.PairID+"/response", nil)
 		req.Header.Set("X-Pair-Token", session.Token)
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			time.Sleep(2 * time.Second)
 			continue
@@ -313,16 +315,21 @@ func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, er
 		var result struct {
 			Data string `json:"data"`
 		}
-		json.NewDecoder(resp.Body).Decode(&result)
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("réponse invalide du serveur")
+		}
 		resp.Body.Close()
 
 		decrypted, err := Decrypt(result.Data, session.Code)
 		if err != nil {
-			return nil, fmt.Errorf("déchiffrement échoué")
+			return nil, fmt.Errorf("déchiffrement échoué (possible attaque)")
 		}
 
 		var pairData PairData
-		json.Unmarshal(decrypted, &pairData)
+		if err := json.Unmarshal(decrypted, &pairData); err != nil {
+			return nil, fmt.Errorf("données de pairing corrompues")
+		}
 		return &pairData, nil
 	}
 
@@ -333,7 +340,7 @@ func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, er
 func Cleanup(session *PairSession) {
 	req, _ := http.NewRequest("DELETE", WorkerURL+"/pair/"+session.PairID, nil)
 	req.Header.Set("X-Pair-Token", session.Token)
-	http.DefaultClient.Do(req)
+	httpClient.Do(req)
 }
 
 // AddAuthorizedKey adds a validated public key to ~/.ssh/authorized_keys

@@ -777,8 +777,10 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 
 	configMu.Lock()
 	cfg, err := config.Load()
+	cfDomain := ""
 	if err == nil && cfg.Cloudflare.Domain != "" {
-		response.CFDomain = cfg.Cloudflare.Domain
+		cfDomain = cfg.Cloudflare.Domain
+		response.CFDomain = cfDomain
 	}
 	configMu.Unlock()
 
@@ -796,8 +798,8 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 
 	// Add machine to config
 	tunnel := ""
-	if cfg != nil && cfg.Cloudflare.Domain != "" {
-		tunnel = serverData.Hostname + "." + cfg.Cloudflare.Domain
+	if cfDomain != "" {
+		tunnel = serverData.Hostname + "." + cfDomain
 	}
 
 	configMu.Lock()
