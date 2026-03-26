@@ -219,23 +219,20 @@ var tunnelQuickCmd = &cobra.Command{
 			fmt.Println("Provider de tunnel:")
 			fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
 			fmt.Println("  2) localhost.run  (zero install, via SSH)")
-			fmt.Println("  3) serveo.net    (zero install, via SSH, peut etre instable)")
-			fmt.Println("  4) bore.pub      (auto-install bore)")
-			fmt.Println("  5) Cloudflare    (tunnel permanent, necessite compte CF)")
-			fmt.Println("  6) Worker perso  (configurer ton propre relay)")
+			fmt.Println("  3) bore.pub      (auto-install bore)")
+			fmt.Println("  4) Cloudflare    (tunnel permanent, necessite compte CF)")
+			fmt.Println("  5) Worker perso  (configurer ton propre relay)")
 			fmt.Print("Choix [1]: ")
 			choice, _ := reader.ReadString('\n')
 			choice = strings.TrimSpace(choice)
 			switch choice {
 			case "2", "localhost.run":
 				tunnelProvider = "localhost.run"
-			case "3", "serveo.net":
-				tunnelProvider = "serveo.net"
-			case "4", "bore":
+			case "3", "bore":
 				tunnelProvider = "bore"
-			case "5", "cloudflare", "cf":
+			case "4", "cloudflare", "cf":
 				tunnelProvider = "cloudflare"
-			case "6", "worker":
+			case "5", "worker":
 				tunnelProvider = "worker"
 			default:
 				tunnelProvider = "trycloudflare"
@@ -248,8 +245,6 @@ var tunnelQuickCmd = &cobra.Command{
 			runTunnelCloudflare()
 		case "localhost.run":
 			runTunnelSSH("localhost.run", "ssh", "-R", "80:localhost:22", "nokey@localhost.run")
-		case "serveo.net":
-			runTunnelSSH("serveo.net", "ssh", "-R", "0:localhost:22", "serveo.net")
 		case "bore":
 			runTunnelBore()
 		case "cloudflare":
