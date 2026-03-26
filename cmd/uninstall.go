@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
@@ -44,9 +45,22 @@ var uninstallCmd = &cobra.Command{
 
 		// Remove binary
 		if err := os.Remove(execPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, err)
-			fmt.Fprintln(os.Stderr, "Relance avec: sudo hop uninstall")
-			hasError = true
+			if os.IsPermission(err) {
+				fmt.Printf("→ Suppression de %s (sudo)...\n", execPath)
+				sudoCmd := exec.Command("sudo", "rm", execPath)
+				sudoCmd.Stdin = os.Stdin
+				sudoCmd.Stdout = os.Stdout
+				sudoCmd.Stderr = os.Stderr
+				if sudoErr := sudoCmd.Run(); sudoErr != nil {
+					fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, sudoErr)
+					hasError = true
+				} else {
+					fmt.Printf("→ %s supprime\n", execPath)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, err)
+				hasError = true
+			}
 		} else {
 			fmt.Printf("→ %s supprime\n", execPath)
 		}
