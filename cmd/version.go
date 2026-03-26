@@ -46,12 +46,11 @@ var versionCmd = &cobra.Command{
 }
 
 func fetchLatestVersion() (string, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/meumeu-dev/hop/releases/latest", nil)
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := githubRequest("https://api.github.com/repos/meumeu-dev/hop/releases/latest")
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	resp, err := client.Do(req)
 	if err != nil {
