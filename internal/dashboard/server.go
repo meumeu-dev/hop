@@ -78,6 +78,18 @@ type remoteReq struct {
 	Key  string `json:"key"`
 }
 
+func basicAuthMiddleware(password string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, ok := r.BasicAuth()
+		if !ok || subtle.ConstantTimeCompare([]byte(pass), []byte(password)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="hop dashboard"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func isAllowedOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -203,10 +215,10 @@ func registerAPIRoutes(mux *http.ServeMux) {
 }
 
 func Start(port int, open bool) error {
-	return StartWithBind(port, "127.0.0.1", open)
+	return StartWithBind(port, "127.0.0.1", "", open)
 }
 
-func StartWithBind(port int, bind string, open bool) error {
+func StartWithBind(port int, bind string, password string, open bool) error {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux)
 
@@ -235,7 +247,11 @@ func StartWithBind(port int, bind string, open bool) error {
 		openBrowser(fmt.Sprintf("http://localhost:%d", port))
 	}
 
-	handler := dashboardAuthMiddleware(csrfToken, mux)
+	var handler http.Handler
+	handler = dashboardAuthMiddleware(csrfToken, mux)
+	if password != "" {
+		handler = basicAuthMiddleware(password, handler)
+	}
 	server := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  15 * time.Second,

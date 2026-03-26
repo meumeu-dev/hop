@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -490,16 +491,11 @@ func findOrInstallBore() string {
 	os.MkdirAll(binDir, 0700)
 
 	arch := "x86_64"
-	switch strings.ToLower(os.Getenv("GOARCH")) {
+	switch runtime.GOARCH {
 	case "arm64":
 		arch = "aarch64"
 	case "arm":
 		arch = "armv7"
-	}
-	// Use runtime arch
-	switch {
-	case strings.Contains(arch, "x86"):
-		// default
 	}
 
 	url := fmt.Sprintf("https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.2-%s-unknown-linux-musl.tar.gz", arch)

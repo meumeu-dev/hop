@@ -120,8 +120,8 @@ func ValidateURL(rawURL string) error {
 		if ip == nil {
 			continue
 		}
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("URL invalide: pointe vers une adresse locale/link-local")
+		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+			return fmt.Errorf("URL invalide: pointe vers une adresse locale/privee")
 		}
 	}
 
