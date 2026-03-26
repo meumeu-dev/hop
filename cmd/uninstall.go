@@ -32,20 +32,28 @@ var uninstallCmd = &cobra.Command{
 			return
 		}
 
+		hasError := false
+
 		// Remove ~/.hop/
 		if err := os.RemoveAll(hopDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", hopDir, err)
+			hasError = true
 		} else {
 			fmt.Printf("→ %s supprime\n", hopDir)
 		}
 
 		// Remove binary
 		if err := os.Remove(execPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v (essaie sudo hop uninstall)\n", execPath, err)
+			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, err)
+			fmt.Fprintln(os.Stderr, "Relance avec: sudo hop uninstall")
+			hasError = true
 		} else {
 			fmt.Printf("→ %s supprime\n", execPath)
 		}
 
+		if hasError {
+			os.Exit(1)
+		}
 		fmt.Println("→ hop desinstalle.")
 	},
 }
