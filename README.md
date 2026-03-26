@@ -5,12 +5,21 @@ Lanceur de commandes, SSH et config perso. Un seul binaire pour gerer toutes tes
 ## Installation
 
 ```bash
-# Depuis les releases GitHub
-curl -L https://github.com/meumeu-dev/hop/releases/latest/download/hop-linux-amd64 -o hop
-chmod +x hop && sudo mv hop /usr/local/bin/
+# Script d'install (repo prive — necessite gh CLI ou GITHUB_TOKEN)
+gh auth login  # si pas deja fait
+curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
+
+# Ou avec token explicite
+GITHUB_TOKEN=ghp_xxx bash install.sh
 
 # Ou build depuis les sources
 go build -o hop .
+```
+
+### Mise a jour
+
+```bash
+hop update
 ```
 
 ## Demarrage rapide
