@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,8 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
+
+var updateForce bool
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
@@ -20,7 +25,7 @@ var updateCmd = &cobra.Command{
 		fmt.Printf("hop %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
 
 		fmt.Println("→ Verification de la derniere version...")
-		latest, err := fetchLatestVersion()
+		latest, changelog, err := fetchLatestRelease()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
@@ -31,7 +36,29 @@ var updateCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("→ Mise a jour %s -> %s\n", version, latest)
+		fmt.Printf("\n→ Nouvelle version disponible: %s -> %s\n", version, latest)
+
+		// Show changelog
+		if changelog != "" {
+			fmt.Println()
+			fmt.Println("Changelog:")
+			fmt.Println(formatChangelog(changelog))
+		}
+		fmt.Printf("\nhttps://github.com/meumeu-dev/hop/releases/tag/%s\n", latest)
+
+		// Ask confirmation unless -y
+		if !updateForce {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("\nMettre a jour ? [o/N]: ")
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(strings.ToLower(confirm))
+			if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+				fmt.Println("Annule.")
+				return
+			}
+		}
+
+		fmt.Println()
 
 		arch := runtime.GOARCH
 		binaryName := fmt.Sprintf("hop-linux-%s", arch)
@@ -48,14 +75,12 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Find asset download URL from release assets
 		assetURL := findAssetURL(body, binaryName)
 		if assetURL == "" {
 			fmt.Fprintf(os.Stderr, "Erreur: binaire %s non trouve dans la release %s\n", binaryName, latest)
 			os.Exit(1)
 		}
 
-		// Download the asset
 		data, err := downloadAsset(assetURL)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur telechargement: %v\n", err)
@@ -67,18 +92,15 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Get current binary path
 		execPath, err := os.Executable()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: impossible de trouver le binaire actuel: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Try writing to a temp file next to the binary
 		tmpPath := execPath + ".new"
 		if err := os.WriteFile(tmpPath, data, 0755); err != nil {
 			if os.IsPermission(err) {
-				// Write to /tmp then sudo mv
 				tmpPath = "/tmp/hop.new"
 				if err := os.WriteFile(tmpPath, data, 0755); err != nil {
 					fmt.Fprintf(os.Stderr, "Erreur ecriture: %v\n", err)
@@ -101,14 +123,12 @@ var updateCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Normal atomic replace
 		oldPath := execPath + ".old"
 		os.Remove(oldPath)
 
 		if err := os.Rename(execPath, oldPath); err != nil {
 			os.Remove(tmpPath)
 			if os.IsPermission(err) {
-				// Fallback: sudo mv
 				fmt.Println("→ Installation (sudo)...")
 				mvCmd := exec.Command("sudo", "bash", "-c", fmt.Sprintf("mv %s %s.old 2>/dev/null; mv %s %s", execPath, execPath, tmpPath, execPath))
 				mvCmd.Stdin = os.Stdin
@@ -136,6 +156,102 @@ var updateCmd = &cobra.Command{
 	},
 }
 
+// fetchLatestRelease returns version, changelog body, error
+func fetchLatestRelease() (string, string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := githubRequest("https://api.github.com/repos/meumeu-dev/hop/releases/latest")
+	if err != nil {
+		return "", "", err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", "", fmt.Errorf("GitHub API: %s", resp.Status)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Body    string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", "", err
+	}
+	return strings.TrimSpace(release.TagName), release.Body, nil
+}
+
+// fetchLatestVersion kept for version --check compatibility
+func fetchLatestVersion() (string, error) {
+	v, _, err := fetchLatestRelease()
+	return v, err
+}
+
+func formatChangelog(body string) string {
+	lines := strings.Split(body, "\n")
+	var out []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, "  "+line)
+	}
+	if len(out) > 20 {
+		out = out[:20]
+		out = append(out, "  ...")
+	}
+	return strings.Join(out, "\n")
+}
+
+// CheckUpdateBackground checks for updates silently, prints a notice if available.
+// Called from PersistentPreRun, runs only once per day.
+func CheckUpdateBackground() {
+	if version == "dev" {
+		return
+	}
+
+	// Check once per day max
+	markerPath := config.HopDir() + "/.last-update-check"
+	if info, err := os.Stat(markerPath); err == nil {
+		if time.Since(info.ModTime()) < 24*time.Hour {
+			return
+		}
+	}
+
+	// Touch the marker
+	os.MkdirAll(config.HopDir(), 0700)
+	os.WriteFile(markerPath, []byte(time.Now().Format(time.RFC3339)), 0600)
+
+	// Quick check (2s timeout)
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := githubRequest("https://api.github.com/repos/meumeu-dev/hop/releases/latest")
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	json.NewDecoder(resp.Body).Decode(&release)
+	latest := strings.TrimSpace(release.TagName)
+
+	if latest != "" && latest != version && latest != "v"+version {
+		fmt.Fprintf(os.Stderr, "\n→ Mise a jour disponible: %s -> %s (hop update)\n\n", version, latest)
+	}
+}
+
 // githubToken returns a GitHub token from env or gh CLI
 func githubToken() string {
 	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
@@ -144,7 +260,6 @@ func githubToken() string {
 	if t := os.Getenv("GH_TOKEN"); t != "" {
 		return t
 	}
-	// Try gh auth token
 	out, err := exec.Command("gh", "auth", "token").Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))
@@ -152,7 +267,6 @@ func githubToken() string {
 	return ""
 }
 
-// githubRequest creates an authenticated GitHub API request
 func githubRequest(url string) (*http.Request, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -165,7 +279,6 @@ func githubRequest(url string) (*http.Request, error) {
 	return req, nil
 }
 
-// githubGet fetches a GitHub API URL with auth
 func githubGet(url string) ([]byte, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := githubRequest(url)
@@ -183,16 +296,13 @@ func githubGet(url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 }
 
-// findAssetURL extracts the browser_download_url for the given asset name
 func findAssetURL(releaseJSON []byte, assetName string) string {
-	// Simple string search — avoids pulling in encoding/json for a simple lookup
 	s := string(releaseJSON)
 	needle := `"name":"` + assetName + `"`
 	idx := strings.Index(s, needle)
 	if idx < 0 {
 		return ""
 	}
-	// Find browser_download_url near this asset
 	sub := s[idx:]
 	urlNeedle := `"browser_download_url":"`
 	uidx := strings.Index(sub, urlNeedle)
@@ -207,7 +317,6 @@ func findAssetURL(releaseJSON []byte, assetName string) string {
 	return sub[start : start+end]
 }
 
-// downloadAsset downloads a GitHub release asset with auth
 func downloadAsset(url string) ([]byte, error) {
 	client := &http.Client{Timeout: 120 * time.Second}
 	req, err := http.NewRequest("GET", url, nil)
@@ -226,9 +335,10 @@ func downloadAsset(url string) ([]byte, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, 100<<20)) // 100MB max
+	return io.ReadAll(io.LimitReader(resp.Body, 100<<20))
 }
 
 func init() {
+	updateCmd.Flags().BoolVarP(&updateForce, "yes", "y", false, "Skip la confirmation")
 	rootCmd.AddCommand(updateCmd)
 }

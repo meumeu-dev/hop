@@ -1,11 +1,7 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -43,32 +39,6 @@ var versionCmd = &cobra.Command{
 			}
 		}
 	},
-}
-
-func fetchLatestVersion() (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := githubRequest("https://api.github.com/repos/meumeu-dev/hop/releases/latest")
-	if err != nil {
-		return "", err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GitHub API: %s", resp.Status)
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(release.TagName), nil
 }
 
 func init() {

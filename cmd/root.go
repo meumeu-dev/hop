@@ -28,6 +28,10 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Erreur init: %v\n", err)
 			os.Exit(1)
 		}
+		// Silent update check (once per day, 2s max)
+		if cmd.Name() != "update" && cmd.Name() != "version" && cmd.Name() != "uninstall" {
+			CheckUpdateBackground()
+		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
