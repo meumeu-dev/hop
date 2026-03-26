@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -214,6 +215,12 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	}
 
 	if m.Tunnel != "" {
+		// Auto-install cloudflared if needed
+		if _, err := cloudflared.EnsureInstalled(); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Installe cloudflared avec: hop tunnel setup")
+			os.Exit(1)
+		}
 		fmt.Printf("→ Connexion via Cloudflare Tunnel (%s)\n", m.Tunnel)
 		return m.User + "@" + m.Tunnel, true
 	}
@@ -226,7 +233,8 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 func sshArgs(target string, viaTunnel bool) []string {
 	args := []string{}
 	if viaTunnel {
-		args = append(args, "-o", "ProxyCommand=cloudflared access ssh --hostname %h")
+		cfPath := cloudflared.Path()
+		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
 	}
 	args = append(args, target)
 	return args

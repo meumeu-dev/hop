@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -30,25 +30,14 @@ var tunnelSetupCmd = &cobra.Command{
 			loadEnvFile(config.ExpandPath(cfg.Cloudflare.EnvFile))
 		}
 
-		if _, err := exec.LookPath("cloudflared"); err != nil {
-			fmt.Println("cloudflared non trouvé. Installation...")
-			sh := exec.Command("bash", "-c",
-				"curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared && chmod +x /tmp/cloudflared && sudo mv /tmp/cloudflared /usr/local/bin/")
-			sh.Stdin = os.Stdin
-			sh.Stdout = os.Stdout
-			sh.Stderr = os.Stderr
-			if err := sh.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "Erreur installation cloudflared: %v\n", err)
-				os.Exit(1)
-			}
+		// Auto-install cloudflared
+		if _, err := cloudflared.EnsureInstalled(); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
 		}
 
 		fmt.Println("→ Lancement de 'cloudflared tunnel login'...")
-		login := exec.Command("cloudflared", "tunnel", "login")
-		login.Stdin = os.Stdin
-		login.Stdout = os.Stdout
-		login.Stderr = os.Stderr
-		if err := login.Run(); err != nil {
+		if err := cloudflared.Run("tunnel", "login"); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur login: %v\n", err)
 			os.Exit(1)
 		}
@@ -61,11 +50,12 @@ var tunnelStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Affiche l'état des tunnels",
 	Run: func(cmd *cobra.Command, args []string) {
-		sh := exec.Command("cloudflared", "tunnel", "list")
-		sh.Stdout = os.Stdout
-		sh.Stderr = os.Stderr
-		if err := sh.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "cloudflared non disponible ou non configuré.\n")
+		if !cloudflared.IsInstalled() {
+			fmt.Fprintln(os.Stderr, "cloudflared non installé. Lance: hop tunnel setup")
+			os.Exit(1)
+		}
+		if err := cloudflared.Run("tunnel", "list"); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
 		}
 	},
@@ -92,7 +82,6 @@ func loadEnvFile(path string) {
 			continue
 		}
 		key := strings.TrimSpace(parts[0])
-		// Only allow safe env var prefixes
 		allowed := false
 		for _, prefix := range allowedEnvPrefixes {
 			if strings.HasPrefix(strings.ToUpper(key), prefix) {

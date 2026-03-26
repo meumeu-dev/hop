@@ -257,7 +257,7 @@ func Init() error {
 	// Gitignore secrets
 	gitignorePath := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
-		gitignore := "# Ne pas sync les secrets\nsecrets.yml\n*.key\n*.pem\n*.env\nid_rsa*\n"
+		gitignore := "# Ne pas sync les secrets\nsecrets.yml\n*.key\n*.pem\n*.env\nid_rsa*\nbin/\n"
 		os.WriteFile(gitignorePath, []byte(gitignore), 0600)
 	}
 
