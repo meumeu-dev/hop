@@ -246,7 +246,7 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 		PairID string `json:"pair_id"`
 		Token  string `json:"token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +272,7 @@ func FetchPairData(pairID string, code string) (*PairData, error) {
 	var result struct {
 		Data string `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -347,7 +347,7 @@ func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, er
 		var result struct {
 			Data string `json:"data"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("réponse invalide du serveur")
 		}

@@ -96,21 +96,31 @@ var updateCmd = &cobra.Command{
 
 		// Verify SHA256 checksum
 		checksumURL := findAssetURL(body, binaryName+".sha256")
-		if checksumURL != "" {
-			checksumData, err := downloadAsset(checksumURL)
-			if err == nil {
-				expectedHash := strings.Fields(string(checksumData))[0]
-				actualHash := sha256hex(data)
-				if expectedHash != actualHash {
-					fmt.Fprintf(os.Stderr, "Erreur: checksum invalide!\n")
-					fmt.Fprintf(os.Stderr, "  Attendu:  %s\n", expectedHash)
-					fmt.Fprintf(os.Stderr, "  Obtenu:   %s\n", actualHash)
-					fmt.Fprintln(os.Stderr, "Le binaire a peut-etre ete altere. Annulation.")
-					os.Exit(1)
-				}
-				fmt.Println("→ Checksum SHA256 verifie")
-			}
+		if checksumURL == "" {
+			fmt.Fprintln(os.Stderr, "Erreur: fichier checksum non trouve dans la release.")
+			fmt.Fprintln(os.Stderr, "Impossible de verifier l'integrite du binaire. Annulation.")
+			os.Exit(1)
 		}
+		checksumData, err := downloadAsset(checksumURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur telechargement checksum: %v\n", err)
+			os.Exit(1)
+		}
+		fields := strings.Fields(string(checksumData))
+		if len(fields) == 0 {
+			fmt.Fprintln(os.Stderr, "Erreur: fichier checksum vide.")
+			os.Exit(1)
+		}
+		expectedHash := fields[0]
+		actualHash := sha256hex(data)
+		if expectedHash != actualHash {
+			fmt.Fprintf(os.Stderr, "Erreur: checksum invalide!\n")
+			fmt.Fprintf(os.Stderr, "  Attendu:  %s\n", expectedHash)
+			fmt.Fprintf(os.Stderr, "  Obtenu:   %s\n", actualHash)
+			fmt.Fprintln(os.Stderr, "Le binaire a peut-etre ete altere. Annulation.")
+			os.Exit(1)
+		}
+		fmt.Println("→ Checksum SHA256 verifie")
 
 		execPath, err := os.Executable()
 		if err != nil {

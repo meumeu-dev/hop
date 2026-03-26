@@ -88,5 +88,10 @@ func Resolve(machineID string) (string, error) {
 		return "", nil // stale
 	}
 
+	// Validate tunnel URL: must be a hostname, no path/port/private IPs
+	if strings.Contains(result.URL, "/") || strings.Contains(result.URL, " ") {
+		return "", nil
+	}
+
 	return result.URL, nil
 }
