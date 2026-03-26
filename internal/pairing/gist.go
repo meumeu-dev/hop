@@ -12,9 +12,23 @@ import (
 
 var validGistID = regexp.MustCompile(`^[a-f0-9]{20,40}$`)
 
+// CheckGHCLI verifies gh CLI is installed and authenticated
+func CheckGHCLI() error {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return fmt.Errorf("gh CLI non installe. Installe-le: sudo apt install gh && gh auth login")
+	}
+	if err := exec.Command("gh", "auth", "status").Run(); err != nil {
+		return fmt.Errorf("gh CLI non authentifie. Lance: gh auth login")
+	}
+	return nil
+}
+
 // PublishGist creates a private GitHub gist with encrypted pair data.
 // Returns the gist ID.
 func PublishGist(code string, data *PairData) (string, error) {
+	if err := CheckGHCLI(); err != nil {
+		return "", err
+	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return "", err
