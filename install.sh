@@ -1,7 +1,14 @@
 #!/bin/bash
-# Install hop — usage: curl -sSL <url> | bash
-# For private repos: GITHUB_TOKEN=xxx bash install.sh
-# Or if gh CLI is installed, it auto-uses gh auth token
+# Install hop from GitHub releases (private repo)
+#
+# Usage (gh CLI requis):
+#   bash <(gh api repos/meumeu-dev/hop/contents/install.sh --jq '.content' | base64 -d)
+#
+# Ou si le script est deja sur la machine:
+#   bash install.sh
+#
+# Ou avec token:
+#   GITHUB_TOKEN=ghp_xxx bash install.sh
 set -euo pipefail
 
 REPO="meumeu-dev/hop"

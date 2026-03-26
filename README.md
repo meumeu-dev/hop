@@ -5,15 +5,14 @@ Lanceur de commandes, SSH et config perso. Un seul binaire pour gerer toutes tes
 ## Installation
 
 ```bash
-# Script d'install (repo prive — necessite gh CLI ou GITHUB_TOKEN)
-gh auth login  # si pas deja fait
-curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
+# One-liner (necessite gh CLI authentifie)
+bash <(gh api repos/meumeu-dev/hop/contents/install.sh --jq '.content' | base64 -d)
 
 # Ou avec token explicite
 GITHUB_TOKEN=ghp_xxx bash install.sh
 
 # Ou build depuis les sources
-go build -o hop .
+go build -ldflags "-X main.Version=v1.0.0" -o hop .
 ```
 
 ### Mise a jour
