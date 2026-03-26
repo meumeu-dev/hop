@@ -18,6 +18,7 @@ type Config struct {
 	Services   map[string]Service `yaml:"services"`
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
+	WorkerURL  string             `yaml:"worker_url,omitempty"`
 }
 
 type Machine struct {

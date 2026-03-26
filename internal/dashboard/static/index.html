@@ -258,10 +258,10 @@
             <div class="card full">
                 <h2>Modes de pairing</h2>
                 <div style="color: #8b949e; font-size: 13px; line-height: 2;">
-                    <p><strong style="color:#3fb950;">Auto</strong> — <code>hop pair</code> ou <code>hop pair -m auto</code>. LAN + relay en parallele, premier qui repond gagne.</p>
+                    <p><strong style="color:#3fb950;">Auto</strong> — <code>hop pair</code>. LAN + relay en parallele, premier qui repond gagne.</p>
                     <p><strong style="color:#3fb950;">LAN</strong> — <code>hop pair -m lan</code>. Broadcast UDP direct, zero internet.</p>
-                    <p><strong style="color:#58a6ff;">Relay</strong> — <code>hop pair -m relay</code>. Via le worker (chiffre E2E).</p>
-                    <p><strong style="color:#d2a8ff;">Gist</strong> — <code>hop pair -m gist</code>. Via un Gist GitHub prive. Necessite <code>gh</code> CLI.</p>
+                    <p><strong style="color:#58a6ff;">Relay</strong> — <code>hop pair -m relay</code>. Via le worker Cloudflare (chiffre E2E).</p>
+                    <p style="margin-top: 8px; color: #8b949e;">Worker custom: <code>hop worker url https://...</code> — tout est chiffre E2E, le relay ne voit rien.</p>
                 </div>
             </div>
             <div class="card full">

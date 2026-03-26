@@ -2,7 +2,7 @@
 
 > **Beta** — en cours de dev. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
 
-Un seul binaire pour gerer toutes tes machines. SSH, pairing, tunnels Cloudflare.
+Un seul binaire pour gerer toutes tes machines. SSH, pairing chiffre, tunnels Cloudflare.
 
 ## Installation
 
@@ -28,35 +28,40 @@ hop ssh rpi
 | Commande | Description |
 |----------|-------------|
 | `hop <service> [machine]` | Lance un service |
-| `hop pair` | Pairing securise (auto/lan/relay/gist) |
-| `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
+| `hop pair` | Pairing securise (auto/lan/relay) |
+| `hop ssh <machine>` | Connexion SSH (LAN/tunnel) |
 | `hop ping [machine]` | Status des machines |
 | `hop list` | Liste tout |
 | `hop add machine/service` | Ajoute |
-| `hop remove <nom>` | Supprime |
-| `hop rename <ancien> <nouveau>` | Renomme |
-| `hop alias add <alias> <cible>` | Raccourci |
+| `hop remove/rename/alias` | Gestion |
 | `hop tunnel setup` | Tunnel Cloudflare permanent |
-| `hop tunnel status` | Status des tunnels |
 | `hop dashboard` | Interface web |
 | `hop export [--cloud]` | Backup config chiffre |
 | `hop import <source>` | Restaure config |
-| `hop server` | Relay de pairing self-hosted |
-| `hop update [-y]` | Mise a jour (changelog + checksum SHA256) |
-| `hop reset [-y]` | Reset config |
-| `hop uninstall` | Desinstalle hop |
-| `hop version` | Version |
-| `hop completion` | Autocompletion bash/zsh/fish |
+| `hop worker url [url]` | Configure worker custom |
+| `hop server` | Relay self-hosted |
+| `hop update [-y]` | Mise a jour + checksum SHA256 |
+| `hop reset/uninstall` | Cleanup |
+| `hop completion` | Autocompletion |
 
 ## Pairing
 
-4 modes :
+3 modes :
 - **Auto** (`hop pair`) : LAN + relay en parallele
 - **LAN** (`hop pair -m lan`) : broadcast UDP, zero internet
-- **Relay** (`hop pair -m relay`) : worker Cloudflare chiffre E2E
-- **Gist** (`hop pair -m gist`) : GitHub Gist prive
+- **Relay** (`hop pair -m relay`) : worker Cloudflare
 
-Chiffrement AES-GCM + Argon2id, code 8 chars alphanumerique.
+Chiffrement AES-GCM + Argon2id. Le relay ne voit jamais les donnees en clair (E2E).
+
+### Worker custom
+
+Par defaut, hop utilise le relay `hop-pair.meumeudev.workers.dev`. Pour utiliser ton propre relay :
+
+```bash
+# Deploie le worker sur ton compte CF (code source dans worker/)
+# Puis configure l'URL
+hop worker url https://hop-pair.ton-domaine.workers.dev
+```
 
 ## Tunnels
 
@@ -70,7 +75,7 @@ Necessite un compte Cloudflare (gratuit) + un domaine.
 
 ```bash
 hop dashboard                     # localhost
-hop dashboard --bind 0.0.0.0      # reseau (mot de passe)
+hop dashboard --bind 0.0.0.0      # reseau (mot de passe requis)
 ```
 
 ## Config

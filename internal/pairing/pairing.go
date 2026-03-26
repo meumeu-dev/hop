@@ -22,10 +22,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const WorkerURL = "https://hop-pair.meumeudev.workers.dev"
+const DefaultWorkerURL = "https://hop-pair.meumeudev.workers.dev"
 
 func GetWorkerURL() string {
-	return WorkerURL
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(home + "/.hop/config.yml")
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "worker_url:") {
+				url := strings.TrimSpace(strings.TrimPrefix(line, "worker_url:"))
+				url = strings.Trim(url, "\"'")
+				if url != "" && strings.HasPrefix(url, "https://") {
+					return url
+				}
+			}
+		}
+	}
+	return DefaultWorkerURL
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}

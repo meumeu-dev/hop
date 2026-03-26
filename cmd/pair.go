@@ -28,7 +28,7 @@ Le token est affiché par 'hop pair' sur l'autre machine.
 Formats:
   Worker:  <pair_id>.<code>.<token>
   LAN:     <code> (6 chiffres)
-  Gist:    gist:<gist_id>.<code>`,
+  Worker:  utilise le relay par defaut ou configure avec hop worker url`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
@@ -90,7 +90,6 @@ func runPairServer() {
 		fmt.Println("  1) Auto (LAN + relay en parallele)")
 		fmt.Println("  2) LAN uniquement")
 		fmt.Println("  3) Relay uniquement")
-		fmt.Println("  4) GitHub Gist")
 		fmt.Print("Choix [1]: ")
 		choice, _ := reader.ReadString('\n')
 		choice = strings.TrimSpace(choice)
@@ -99,8 +98,6 @@ func runPairServer() {
 			pairMode = "lan"
 		case "3", "relay":
 			pairMode = "relay"
-		case "4", "gist":
-			pairMode = "gist"
 		default:
 			pairMode = "auto"
 		}
@@ -113,9 +110,6 @@ func runPairServer() {
 		return
 	case "relay", "worker":
 		runPairServerWorker(code, data)
-		return
-	case "gist":
-		runPairServerGist(code, data)
 		return
 	}
 
@@ -190,39 +184,6 @@ func runPairServerLAN(code string, data *pairing.PairData) {
 	fmt.Println("En attente de connexion LAN... (expire dans 2 min)")
 
 	response, err := pairing.StartLANServer(code, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
-		os.Exit(1)
-	}
-
-	finalizePairServer(response, code, data)
-}
-
-func runPairServerGist(code string, data *pairing.PairData) {
-	fmt.Println("→ Mode GitHub Gist activé")
-	fmt.Println("→ Création du gist...")
-
-	gistID, err := pairing.PublishGist(code, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
-	}
-	defer pairing.CleanupGist(gistID)
-
-	pairToken := "gist:" + gistID + "." + code
-
-	fmt.Println()
-	fmt.Println("Sur l'autre machine, lance:")
-	fmt.Printf("  hop pair %s\n", pairToken)
-
-	if err := copyToClipboard(pairToken); err == nil {
-		fmt.Println()
-		fmt.Println("(aussi copié dans le presse-papier)")
-	}
-	fmt.Println()
-	fmt.Println("En attente de réponse via gist... (expire dans 2 min)")
-
-	response, err := pairing.WaitGistResponse(gistID, code, 2*time.Minute)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
 		os.Exit(1)
@@ -358,13 +319,8 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 
 func runPairClient(pairToken string) {
 	// Detect token format:
-	// - "gist:<gist_id>.<code>" → Gist mode
-	// - "<6digits>" → LAN mode
+	// - 8 chars alphanumeric → LAN mode
 	// - "<pair_id>.<code>.<token>" → Worker mode
-	if strings.HasPrefix(pairToken, "gist:") {
-		runPairClientGist(pairToken)
-		return
-	}
 
 	// Check if it's a short code without dots (LAN mode)
 	// LAN code: 8 alphanumeric chars, no dots or colons
@@ -421,56 +377,6 @@ func runPairClientLAN(code string) {
 
 	serverData, err := pairing.ConnectLAN(code, response)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
-	}
-
-	finalizePairClient(serverData)
-}
-
-func runPairClientGist(pairToken string) {
-	// Parse gist:<gist_id>.<code>
-	rest := strings.TrimPrefix(pairToken, "gist:")
-	parts := strings.SplitN(rest, ".", 2)
-	if len(parts) != 2 {
-		fmt.Fprintln(os.Stderr, "Token gist invalide. Format: gist:<gist_id>.<code>")
-		os.Exit(1)
-	}
-
-	gistID := parts[0]
-	code := parts[1]
-
-	fmt.Println("→ Mode Gist: récupération des données...")
-
-	serverData, err := pairing.FetchGist(gistID, code)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := config.ValidateName(serverData.Hostname); err != nil {
-		fmt.Fprintf(os.Stderr, "Hostname distant invalide: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("→ Machine trouvée: %s (%s@%s)\n", serverData.Hostname, serverData.User, serverData.IP)
-	if parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(serverData.PublicKey)); err == nil {
-		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("\nAccepter ce pairing ? [o/N]: ")
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
-		fmt.Println("Pairing annulé.")
-		os.Exit(0)
-	}
-
-	_, response := buildClientResponse()
-
-	fmt.Println("→ Envoi de la réponse via gist...")
-	if err := pairing.PostGistResponse(gistID, code, response); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 		os.Exit(1)
 	}
@@ -812,6 +718,6 @@ func splitSpaces(s string) []string {
 }
 
 func init() {
-	pairCmd.Flags().StringVarP(&pairMode, "mode", "m", "auto", "Mode de pairing: auto, lan, relay, gist")
+	pairCmd.Flags().StringVarP(&pairMode, "mode", "m", "auto", "Mode de pairing: auto, lan, relay")
 	rootCmd.AddCommand(pairCmd)
 }
