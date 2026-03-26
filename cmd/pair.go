@@ -16,8 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-var pairLAN bool
-var pairGist bool
+var pairMode string
 
 var pairCmd = &cobra.Command{
 	Use:   "pair [token]",
@@ -82,13 +81,21 @@ func buildPairData() (string, *pairing.PairData) {
 func runPairServer() {
 	code, data := buildPairData()
 
-	if pairLAN {
+	switch pairMode {
+	case "lan":
 		runPairServerLAN(code, data)
 		return
-	}
-	if pairGist {
+	case "relay", "worker":
+		runPairServerWorker(code, data)
+		return
+	case "gist":
 		runPairServerGist(code, data)
 		return
+	case "auto", "":
+		// continue below
+	default:
+		fmt.Fprintf(os.Stderr, "Mode inconnu: %s (auto, lan, relay, gist)\n", pairMode)
+		os.Exit(1)
 	}
 
 	// Default: register on worker + broadcast LAN simultaneously
@@ -707,7 +714,6 @@ func extractTunnelID(jsonOutput string) string {
 }
 
 func init() {
-	pairCmd.Flags().BoolVar(&pairLAN, "lan", false, "Force le pairing en mode LAN (broadcast UDP)")
-	pairCmd.Flags().BoolVar(&pairGist, "gist", false, "Force le pairing via GitHub Gist")
+	pairCmd.Flags().StringVarP(&pairMode, "mode", "m", "auto", "Mode de pairing: auto, lan, relay, gist")
 	rootCmd.AddCommand(pairCmd)
 }
