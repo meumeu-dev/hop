@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	cf "github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/meumeu-dev/hop/internal/pairing"
 	"github.com/spf13/cobra"
@@ -641,10 +640,6 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 		return
 	}
 
-	// Update remote hop config to point to the env file
-	configCmd := fmt.Sprintf("hop add service ssh --cmd ssh 2>/dev/null; true")
-	_ = configCmd
-
 	fmt.Println("  → Identifiants transférés !")
 	fmt.Println()
 	fmt.Printf("  → Pour finaliser, lance sur %s:\n", server.Hostname)
@@ -851,70 +846,6 @@ func splitSpaces(s string) []string {
 		result = append(result, current)
 	}
 	return result
-}
-
-func setupTunnelAuto(hostname, cfDomain, cfEmail, cfAPIKey string) {
-	cfPath, err := cf.EnsureInstalled()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur installation cloudflared: %v\n", err)
-		return
-	}
-
-	os.Setenv("CLOUDFLARE_API_KEY", cfAPIKey)
-	os.Setenv("CLOUDFLARE_EMAIL", cfEmail)
-
-	fmt.Println("  → Authentification Cloudflare...")
-	loginCmd := exec.Command(cfPath, "tunnel", "login")
-	loginCmd.Stdin = os.Stdin
-	loginCmd.Stdout = os.Stdout
-	loginCmd.Stderr = os.Stderr
-	if err := loginCmd.Run(); err != nil {
-		fmt.Println("  → Login échoué, lance: hop tunnel setup")
-		return
-	}
-
-	tunnelName := hostname
-	fmt.Printf("  → Création du tunnel '%s'...\n", tunnelName)
-	exec.Command(cfPath, "tunnel", "create", "--", tunnelName).Run()
-
-	tunnelHostname := hostname + "." + cfDomain
-	fmt.Printf("  → Route DNS %s...\n", tunnelHostname)
-	exec.Command(cfPath, "tunnel", "route", "dns", "--", tunnelName, tunnelHostname).Run()
-
-	cfConfigDir := os.ExpandEnv("$HOME/.cloudflared")
-	cfConfigPath := cfConfigDir + "/config.yml"
-
-	listOut, err := exec.Command(cfPath, "tunnel", "list", "-o", "json").Output()
-	if err == nil {
-		tunnelID := extractTunnelID(string(listOut))
-		if tunnelID != "" {
-			cfConfig := fmt.Sprintf("tunnel: %s\ncredentials-file: %s/%s.json\n\ningress:\n  - hostname: %s\n    service: ssh://localhost:22\n  - service: http_status:404\n",
-				tunnelID, cfConfigDir, tunnelID, tunnelHostname)
-			os.WriteFile(cfConfigPath, []byte(cfConfig), 0600)
-			fmt.Printf("  → Config: %s\n", cfConfigPath)
-		}
-	}
-
-	fmt.Println("  → Installation service systemd...")
-	serviceCmd := exec.Command("sudo", cfPath, "service", "install")
-	serviceCmd.Stdin = os.Stdin
-	serviceCmd.Stdout = os.Stdout
-	serviceCmd.Stderr = os.Stderr
-	if err := serviceCmd.Run(); err != nil {
-		fmt.Printf("  → Lance manuellement: %s tunnel run %s\n", cfPath, tunnelName)
-	} else {
-		fmt.Println("  → Tunnel actif !")
-	}
-}
-
-func extractTunnelID(jsonOutput string) string {
-	parts := strings.Split(jsonOutput, "\"")
-	for i, part := range parts {
-		if part == "id" && i+2 < len(parts) {
-			return parts[i+2]
-		}
-	}
-	return ""
 }
 
 func init() {

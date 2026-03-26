@@ -19,12 +19,11 @@ hop update
 ## Demarrage rapide
 
 ```bash
-# Initialiser hop
 hop init
 
-# Pairer deux machines (meme reseau)
-hop pair          # machine A — affiche un code
-hop pair 123456   # machine B — entre le code
+# Pairer deux machines
+hop pair          # machine A
+hop pair <token>  # machine B
 
 # Se connecter
 hop ssh rpi
@@ -35,148 +34,91 @@ hop ssh rpi
 | Commande | Description |
 |----------|-------------|
 | `hop <service> [machine]` | Lance un service (local ou distant) |
-| `hop list` | Liste services et machines |
-| `hop add machine <nom> <ip>` | Ajoute une machine |
-| `hop add service <nom> --cmd <cmd>` | Ajoute un service |
-| `hop remove <nom>` | Supprime une machine ou service |
-| `hop rename <ancien> <nouveau>` | Renomme une machine ou service |
-| `hop alias add <alias> <cible>` | Cree un raccourci |
+| `hop pair` | Pairing securise (auto/lan/relay/gist) |
+| `hop ssh <machine>` | Connexion SSH intelligente |
 | `hop ping [machine]` | Verifie l'etat des machines |
-| `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
-| `hop pair` | Pairing securise entre machines |
-| `hop tunnel quick` | Tunnel temporaire (zero config CF) |
-| `hop tunnel setup` | Configure un Cloudflare Tunnel permanent |
-| `hop server` | Lance un relay de pairing self-hosted |
-| `hop worker deploy` | Deploie ton propre worker CF |
-| `hop worker url [url]` | Configure l'URL du worker |
-| `hop dashboard` | Lance le dashboard web |
-| `hop api` | Active l'API REST |
-| `hop remote add <nom> <url>` | Ajoute un hop distant |
+| `hop list` | Liste services et machines |
+| `hop add machine/service` | Ajoute une machine ou service |
+| `hop remove <nom>` | Supprime |
+| `hop rename <ancien> <nouveau>` | Renomme |
+| `hop alias add <alias> <cible>` | Raccourci |
+| `hop tunnel quick` | Tunnel temporaire (multi-provider) |
+| `hop tunnel setup` | Tunnel Cloudflare permanent |
+| `hop dashboard` | Interface web (local/reseau/tunnel) |
+| `hop export` | Backup config chiffre |
+| `hop import <source>` | Restaure config |
+| `hop server` | Relay de pairing self-hosted |
+| `hop worker deploy/url` | Worker custom |
+| `hop update` | Met a jour (changelog + checksum) |
 | `hop version` | Affiche la version |
-| `hop update` | Met a jour hop |
 | `hop reset` | Remet la config a zero |
-| `hop uninstall` | Supprime hop completement |
-| `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
+| `hop uninstall` | Supprime hop |
+| `hop completion` | Autocompletion bash/zsh/fish |
 
 ## Pairing
 
-Le pairing connecte deux machines de maniere securisee. 3 modes disponibles :
+4 modes, selection interactive :
 
-### LAN (par defaut si meme reseau)
 ```bash
-# Machine A:
-hop pair
-# → Recherche sur le reseau local...
-# → Code: 123456
-
-# Machine B:
-hop pair 123456
+hop pair              # menu: auto/lan/relay/gist
+hop pair -m lan       # LAN uniquement
+hop pair -m relay     # relay worker uniquement
+hop pair -m gist      # GitHub Gist (necessite gh CLI)
 ```
-Aucun internet requis. Broadcast UDP + echange direct.
 
-### Worker relay (par defaut si pas en LAN)
-```bash
-# Machine A:
-hop pair
-# → Bascule sur le relay...
-# → Token: abc123.456789.xyz...
+- **Auto** : LAN + relay en parallele, premier qui repond gagne
+- **LAN** : broadcast UDP, zero internet
+- **Relay** : worker Cloudflare chiffre E2E
+- **Gist** : Gist GitHub prive comme relay
 
-# Machine B:
-hop pair abc123.456789.xyz...
-```
-Utilise un relay Cloudflare Worker chiffre E2E. Le relay ne voit jamais les donnees en clair.
-
-### GitHub Gist (sans worker)
-```bash
-# Machine A:
-hop pair --gist
-# → Token: gist:abc123def.456789
-
-# Machine B:
-hop pair gist:abc123def.456789
-```
-Utilise un Gist GitHub prive comme relay. Necessite `gh` CLI.
-
-### Securite
-- Chiffrement AES-GCM avec derivation Argon2id (64MB, 3 iterations)
-- Echange de cles SSH ed25519
-- Verification d'empreinte SSH des deux cotes
-- Confirmation manuelle requise
-
-## Connexion intelligente
-
-Hop detecte automatiquement le meilleur chemin :
-1. **LAN** — ping direct sur le port SSH
-2. **Tunnel configure** — Cloudflare Tunnel permanent
-3. **Tunnel dynamique** — resolution via le worker (trycloudflare)
+Chiffrement AES-GCM + Argon2id, code 8 chars alphanumerique, verification checksum SHA256.
 
 ## Tunnels
 
-### Tunnel temporaire (zero config)
-```bash
-hop tunnel quick
-# → Lance un tunnel trycloudflare, enregistre l'URL sur le worker
-# → Les autres machines resolvent automatiquement
-```
-Aucun compte Cloudflare requis.
-
-### Tunnel permanent
-Necessite un compte Cloudflare (gratuit) + un domaine. Voir la section [Cloudflare setup](#prerequis-pour-les-tunnels-permanents).
-
-## Self-hosted relay
-
-Pour ceux qui ne veulent pas utiliser le worker par defaut :
+5 providers, selection interactive :
 
 ```bash
-# Option 1: deployer son propre worker CF (gratuit)
-hop worker deploy
-
-# Option 2: relay standalone (sur un VPS, raspi, etc.)
-hop server --port 8899
-
-# Configurer l'URL
-hop worker url https://mon-relay.example.com:8899
+hop tunnel quick                # menu provider
+hop tunnel quick -p localhost.run  # skip menu
 ```
 
-## Services & Tmux
+| Provider | Install | Compte requis |
+|----------|---------|---------------|
+| trycloudflare | auto cloudflared | non |
+| localhost.run | zero (SSH) | non |
+| bore.pub | auto bore | non |
+| Cloudflare | auto cloudflared | oui (gratuit) |
+| Worker perso | - | oui |
+
+Si un provider echoue, repropose le menu.
+
+## Dashboard
 
 ```bash
-# Ajouter un service
-hop add service code --cmd "code ." --desc "VS Code"
-hop code pc1
-
-# Lancer dans tmux
-hop code pc1 --tmux --session dev
+hop dashboard              # menu: localhost / reseau / tunnel
+hop dashboard --bind 0.0.0.0  # reseau (mot de passe requis)
 ```
 
-## Dashboard & API
+## Export / Import
 
 ```bash
-hop dashboard           # Interface web locale
-hop api --port 9090     # API REST pour federation
+hop export                 # fichier local chiffre
+hop export --cloud         # upload sur worker (lien 2min)
+hop import backup.enc      # depuis fichier
+hop import cloud:<id>      # depuis worker
 ```
 
-## Alias
+## Self-hosted
 
 ```bash
-hop alias add rpi raspberrypi
-hop ssh rpi     # → se connecte a raspberrypi
+hop server --port 8899     # relay standalone
+hop worker deploy          # deploie ton worker CF
+hop worker url <url>       # configure relay custom
 ```
-
-## Prerequis pour les tunnels permanents
-
-Les tunnels Cloudflare permettent d'acceder a tes machines depuis n'importe ou, sans ouvrir de port. C'est optionnel.
-
-1. Compte Cloudflare gratuit sur [dash.cloudflare.com](https://dash.cloudflare.com)
-2. Domaine ajoute dans Cloudflare (plan Free)
-3. Token API : [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → template "Edit zone DNS"
-4. Configurer dans hop : `hop init` ou `hop dashboard`
-
-Hop gere automatiquement la creation des tunnels, le DNS et cloudflared.
 
 ## Config
 
-La config est dans `~/.hop/config.yml`. Les secrets (cles API) sont dans `~/.hop/secrets.yml` (gitignore).
+`~/.hop/config.yml` (config) + `~/.hop/secrets.yml` (secrets, gitignore).
 
 ## License
 

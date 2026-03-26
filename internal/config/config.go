@@ -18,20 +18,8 @@ type Config struct {
 	Machines   map[string]Machine `yaml:"machines"`
 	Services   map[string]Service `yaml:"services"`
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
-	Remotes    map[string]Remote  `yaml:"remotes,omitempty"`
-	API        APIConfig          `yaml:"api,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
 	WorkerURL  string             `yaml:"worker_url,omitempty"`
-}
-
-type Remote struct {
-	URL string `yaml:"url"`
-	Key string `yaml:"-"` // Never serialize keys to config.yml; they belong in secrets.yml
-}
-
-type APIConfig struct {
-	Key      string `yaml:"-"`
-	ReadOnly bool   `yaml:"read_only,omitempty"`
 }
 
 type Machine struct {
@@ -183,21 +171,17 @@ func GenerateAPIKey() string {
 
 // Secrets stored separately from config (gitignored)
 type Secrets struct {
-	APIKey     string            `yaml:"api_key,omitempty"`
-	RemoteKeys map[string]string `yaml:"remote_keys,omitempty"`
+	APIKey string `yaml:"api_key,omitempty"`
 }
 
 func LoadSecrets() (*Secrets, error) {
 	data, err := os.ReadFile(SecretsPath())
 	if err != nil {
-		return &Secrets{RemoteKeys: make(map[string]string)}, nil
+		return &Secrets{}, nil
 	}
 	var s Secrets
 	if err := yaml.Unmarshal(data, &s); err != nil {
-		return &Secrets{RemoteKeys: make(map[string]string)}, nil
-	}
-	if s.RemoteKeys == nil {
-		s.RemoteKeys = make(map[string]string)
+		return &Secrets{}, nil
 	}
 	return &s, nil
 }
