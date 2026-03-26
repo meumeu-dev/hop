@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,7 +18,6 @@ type Config struct {
 	Services   map[string]Service `yaml:"services"`
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
-	WorkerURL  string             `yaml:"worker_url,omitempty"`
 }
 
 type Machine struct {
@@ -82,37 +80,6 @@ func ValidateIP(ip string) error {
 	if parsed.IsLoopback() || parsed.IsUnspecified() || parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast() {
 		return fmt.Errorf("IP invalide: adresse speciale non autorisee")
 	}
-	return nil
-}
-
-func ValidateURL(rawURL string) error {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		return fmt.Errorf("URL invalide: doit commencer par http:// ou https://")
-	}
-
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("URL invalide")
-	}
-
-	// Resolve hostname and check if it points to a private/loopback IP
-	host := parsed.Hostname()
-	ips, err := net.LookupHost(host)
-	if err != nil {
-		// Can't resolve — allow (might be a tunnel hostname not yet set up)
-		return nil
-	}
-
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
-			return fmt.Errorf("URL invalide: pointe vers une adresse locale/privee")
-		}
-	}
-
 	return nil
 }
 

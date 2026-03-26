@@ -12,7 +12,6 @@ import (
 
 	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
-	"github.com/meumeu-dev/hop/internal/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -255,50 +254,11 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 		return m.User + "@" + m.Tunnel, true
 	}
 
-	// 3. Try dynamic tunnel via worker
-	hostname := ""
-	cfg, _ := config.Load()
-	if cfg != nil {
-		for name, machine := range cfg.Machines {
-			if machine.IP == m.IP && machine.User == m.User {
-				hostname = name
-				break
-			}
-		}
-	}
-	if hostname != "" {
-		if dynURL, err := tunnel.Resolve(hostname); err == nil && dynURL != "" {
-			// bore tunnel: direct SSH to host:port
-			fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
-			// Parse host:port for SSH
-			if strings.Contains(dynURL, ":") {
-				parts := strings.SplitN(dynURL, ":", 2)
-				sshHost := parts[0]
-				sshPort := parts[1]
-				fmt.Printf("→ SSH vers %s port %s\n", sshHost, sshPort)
-				args := []string{"-p", sshPort, m.User + "@" + sshHost}
-				sh := exec.Command("ssh", args...)
-				sh.Stdin = os.Stdin
-				sh.Stdout = os.Stdout
-				sh.Stderr = os.Stderr
-				err := sh.Run()
-				if err != nil {
-					if exitErr, ok := err.(*exec.ExitError); ok {
-						os.Exit(exitErr.ExitCode())
-					}
-				}
-				os.Exit(0)
-			}
-			return m.User + "@" + dynURL, false
-		}
-	}
 
 	fmt.Fprintln(os.Stderr, "Aucune connexion disponible.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "La machine n'est pas joignable en LAN et aucun tunnel n'est configure.")
-	fmt.Fprintln(os.Stderr, "Options:")
-	fmt.Fprintln(os.Stderr, "  - Sur la machine distante: hop tunnel quick  (tunnel temporaire)")
-	fmt.Fprintln(os.Stderr, "  - Sur la machine distante: hop tunnel setup  (tunnel permanent)")
+	fmt.Fprintln(os.Stderr, "Pour l'acces distant: hop tunnel setup (Cloudflare Tunnel permanent)")
 	os.Exit(1)
 	return "", false
 }

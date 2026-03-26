@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/dashboard"
@@ -42,27 +41,14 @@ var dashboardCmd = &cobra.Command{
 			fmt.Println()
 		}
 
-		// Tunnel mode: bind localhost + launch tunnel
+		// Tunnel mode: bind localhost + launch tunnel setup
 		if dashBind == "tunnel" {
-			dashBind = "127.0.0.1"
-			// Start dashboard in background, then tunnel
-			go func() {
-				dashboard.DashboardVersion = version
-				if err := dashboard.StartWithBind(dashPort, "127.0.0.1", "", false); err != nil {
-					fmt.Fprintf(os.Stderr, "Erreur dashboard: %v\n", err)
-					os.Exit(1)
-				}
-			}()
-			fmt.Printf("→ Dashboard local sur http://localhost:%d\n", dashPort)
-			fmt.Println("→ Lancement du tunnel...")
+			fmt.Println("→ Pour exposer le dashboard via tunnel :")
+			fmt.Println("  1. Lance le dashboard: hop dashboard")
+			fmt.Println("  2. Configure un tunnel: hop tunnel setup")
+			fmt.Println("  Le tunnel redirigera le trafic vers le dashboard local.")
 			fmt.Println()
-			hopBin, _ := os.Executable()
-			tunnelCmd := exec.Command(hopBin, "tunnel", "quick")
-			tunnelCmd.Stdout = os.Stdout
-			tunnelCmd.Stderr = os.Stderr
-			tunnelCmd.Stdin = os.Stdin
-			tunnelCmd.Run()
-			return
+			dashBind = "127.0.0.1"
 		}
 
 		// If network mode, require a password

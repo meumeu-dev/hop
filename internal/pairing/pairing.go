@@ -22,27 +22,10 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const DefaultWorkerURL = "https://hop-pair.meumeudev.workers.dev"
+const WorkerURL = "https://hop-pair.meumeudev.workers.dev"
 
-// WorkerURL returns the configured worker URL or the default
 func GetWorkerURL() string {
-	// Check if custom worker is configured
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(home + "/.hop/config.yml")
-	if err == nil {
-		// Simple scan for worker_url in yaml
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "worker_url:") {
-				url := strings.TrimSpace(strings.TrimPrefix(line, "worker_url:"))
-				url = strings.Trim(url, "\"'")
-				if url != "" {
-					return url
-				}
-			}
-		}
-	}
-	return DefaultWorkerURL
+	return WorkerURL
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
@@ -55,7 +38,6 @@ type PairData struct {
 	User      string   `json:"user"`
 	PublicKey string   `json:"public_key"`
 	HostKey   string   `json:"host_key,omitempty"`
-	Tunnel    string   `json:"tunnel,omitempty"`
 	CFDomain  string   `json:"cf_domain,omitempty"`
 	Version   string   `json:"version,omitempty"`
 }

@@ -406,8 +406,7 @@ var serverCmd = &cobra.Command{
 
 		addr := fmt.Sprintf(":%d", serverPort)
 		fmt.Printf("→ Serveur relay hop démarré sur %s\n", addr)
-		fmt.Println("→ Configure worker_url dans ~/.hop/config.yml pour l'utiliser")
-		fmt.Printf("→ Exemple: worker_url: \"http://<ip>%s\"\n", addr)
+		fmt.Println("→ Relay de pairing autonome")
 
 		server := &http.Server{
 			Addr:         addr,

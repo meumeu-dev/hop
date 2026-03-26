@@ -661,71 +661,34 @@ func askAlias(hostname string) string {
 	return input
 }
 
-// checkAndOfferTunnel detects if the remote machine can reach us.
-// If not (asymmetric network), offers to start a tunnel so the remote can connect back.
+// checkAndOfferTunnel warns if machines are on different subnets
 func checkAndOfferTunnel(remoteHostname string) {
-	// Check if our own IP is likely behind a NAT/router that blocks incoming
-	// We do this by checking if the remote stored our IP as reachable
 	cfg, err := config.Load()
 	if err != nil || cfg == nil {
 		return
 	}
 
-	// Find the remote machine in config
 	remoteMachine, ok := cfg.Machines[remoteHostname]
-	if !ok {
+	if !ok || remoteMachine.Tunnel != "" {
 		return
 	}
 
-	// Test if the remote can reach us: try connecting to our own SSH port from the remote's perspective
-	// We can't actually test this — but we CAN check if the remote's IP is on a different subnet
 	localIP := detectLocalIP()
 	if localIP == "" || remoteMachine.IP == "" {
 		return
 	}
 
-	// If remote has a tunnel configured, no need
-	if remoteMachine.Tunnel != "" {
-		return
-	}
-
-	// Simple heuristic: if we're on different /24 subnets, the remote likely can't reach us
 	localParts := strings.Split(localIP, ".")
 	remoteParts := strings.Split(remoteMachine.IP, ".")
 	if len(localParts) == 4 && len(remoteParts) == 4 {
-		sameSubnet := localParts[0] == remoteParts[0] && localParts[1] == remoteParts[1] && localParts[2] == remoteParts[2]
-		if sameSubnet {
-			return // same subnet, probably fine
+		if localParts[0] == remoteParts[0] && localParts[1] == remoteParts[1] && localParts[2] == remoteParts[2] {
+			return
 		}
 	}
 
-	// Different subnets — the remote probably can't reach us
 	fmt.Println()
-	fmt.Printf("⚠ Vous etes sur des reseaux differents (%s vs %s)\n", localIP, remoteMachine.IP)
-	fmt.Printf("  '%s' ne pourra probablement pas se connecter a cette machine.\n", remoteHostname)
-	fmt.Println()
-
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("Options:")
-	fmt.Println("  1) Lancer un tunnel maintenant")
-	fmt.Println("  2) Non, plus tard (hop tunnel quick)")
-	fmt.Print("Choix [1]: ")
-	choice, _ := reader.ReadString('\n')
-	choice = strings.TrimSpace(choice)
-
-	if choice == "2" || choice == "n" || choice == "non" {
-		fmt.Println("  → hop tunnel quick quand tu voudras.")
-		return
-	}
-
-	// Launch hop tunnel quick
-	fmt.Println()
-	hopBin, _ := os.Executable()
-	tunnelCmd := exec.Command(hopBin, "tunnel", "quick")
-	tunnelCmd.Stdout = os.Stdout
-	tunnelCmd.Stderr = os.Stderr
-	tunnelCmd.Stdin = os.Stdin
-	tunnelCmd.Run()
+	fmt.Printf("⚠ Reseaux differents (%s vs %s)\n", localIP, remoteMachine.IP)
+	fmt.Println("  Pour l'acces distant: hop tunnel setup")
 }
 
 func copyToClipboard(text string) error {

@@ -1,19 +1,13 @@
 # hop
 
-> **Beta** — en cours de dev, ca peut bouger. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
+> **Beta** — en cours de dev. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
 
-Lanceur de commandes, SSH et config perso. Un seul binaire pour gerer toutes tes machines.
+Un seul binaire pour gerer toutes tes machines. SSH, pairing, tunnels Cloudflare.
 
 ## Installation
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
-```
-
-### Mise a jour
-
-```bash
-hop update
 ```
 
 ## Demarrage rapide
@@ -33,92 +27,55 @@ hop ssh rpi
 
 | Commande | Description |
 |----------|-------------|
-| `hop <service> [machine]` | Lance un service (local ou distant) |
+| `hop <service> [machine]` | Lance un service |
 | `hop pair` | Pairing securise (auto/lan/relay/gist) |
-| `hop ssh <machine>` | Connexion SSH intelligente |
-| `hop ping [machine]` | Verifie l'etat des machines |
-| `hop list` | Liste services et machines |
-| `hop add machine/service` | Ajoute une machine ou service |
+| `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
+| `hop ping [machine]` | Status des machines |
+| `hop list` | Liste tout |
+| `hop add machine/service` | Ajoute |
 | `hop remove <nom>` | Supprime |
 | `hop rename <ancien> <nouveau>` | Renomme |
 | `hop alias add <alias> <cible>` | Raccourci |
-| `hop tunnel quick` | Tunnel temporaire (multi-provider) |
 | `hop tunnel setup` | Tunnel Cloudflare permanent |
-| `hop dashboard` | Interface web (local/reseau/tunnel) |
-| `hop export` | Backup config chiffre |
+| `hop tunnel status` | Status des tunnels |
+| `hop dashboard` | Interface web |
+| `hop export [--cloud]` | Backup config chiffre |
 | `hop import <source>` | Restaure config |
 | `hop server` | Relay de pairing self-hosted |
-| `hop worker deploy/url` | Worker custom |
-| `hop update` | Met a jour (changelog + checksum) |
-| `hop version` | Affiche la version |
-| `hop reset` | Remet la config a zero |
-| `hop uninstall` | Supprime hop |
+| `hop update [-y]` | Mise a jour (changelog + checksum SHA256) |
+| `hop reset [-y]` | Reset config |
+| `hop uninstall` | Desinstalle hop |
+| `hop version` | Version |
 | `hop completion` | Autocompletion bash/zsh/fish |
 
 ## Pairing
 
-4 modes, selection interactive :
+4 modes :
+- **Auto** (`hop pair`) : LAN + relay en parallele
+- **LAN** (`hop pair -m lan`) : broadcast UDP, zero internet
+- **Relay** (`hop pair -m relay`) : worker Cloudflare chiffre E2E
+- **Gist** (`hop pair -m gist`) : GitHub Gist prive
 
-```bash
-hop pair              # menu: auto/lan/relay/gist
-hop pair -m lan       # LAN uniquement
-hop pair -m relay     # relay worker uniquement
-hop pair -m gist      # GitHub Gist (necessite gh CLI)
-```
-
-- **Auto** : LAN + relay en parallele, premier qui repond gagne
-- **LAN** : broadcast UDP, zero internet
-- **Relay** : worker Cloudflare chiffre E2E
-- **Gist** : Gist GitHub prive comme relay
-
-Chiffrement AES-GCM + Argon2id, code 8 chars alphanumerique, verification checksum SHA256.
+Chiffrement AES-GCM + Argon2id, code 8 chars alphanumerique.
 
 ## Tunnels
 
-5 providers, selection interactive :
-
 ```bash
-hop tunnel quick                # menu provider
-hop tunnel quick -p localhost.run  # skip menu
+hop tunnel setup    # Cloudflare Tunnel permanent + systemd
 ```
 
-| Provider | Install | Compte requis |
-|----------|---------|---------------|
-| trycloudflare | auto cloudflared | non |
-| localhost.run | zero (SSH) | non |
-| bore.pub | auto bore | non |
-| Cloudflare | auto cloudflared | oui (gratuit) |
-| Worker perso | - | oui |
-
-Si un provider echoue, repropose le menu.
+Necessite un compte Cloudflare (gratuit) + un domaine.
 
 ## Dashboard
 
 ```bash
-hop dashboard              # menu: localhost / reseau / tunnel
-hop dashboard --bind 0.0.0.0  # reseau (mot de passe requis)
-```
-
-## Export / Import
-
-```bash
-hop export                 # fichier local chiffre
-hop export --cloud         # upload sur worker (lien 2min)
-hop import backup.enc      # depuis fichier
-hop import cloud:<id>      # depuis worker
-```
-
-## Self-hosted
-
-```bash
-hop server --port 8899     # relay standalone
-hop worker deploy          # deploie ton worker CF
-hop worker url <url>       # configure relay custom
+hop dashboard                     # localhost
+hop dashboard --bind 0.0.0.0      # reseau (mot de passe)
 ```
 
 ## Config
 
-`~/.hop/config.yml` (config) + `~/.hop/secrets.yml` (secrets, gitignore).
+`~/.hop/config.yml` + `~/.hop/secrets.yml`
 
 ## License
 
