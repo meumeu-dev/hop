@@ -352,6 +352,9 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 		}
 	}
 	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
+
+	// Check if the remote machine can reach us back
+	checkAndOfferTunnel(response.Hostname)
 }
 
 func runPairClient(pairToken string) {
@@ -599,6 +602,9 @@ func finalizePairClient(serverData *pairing.PairData) {
 	}
 
 	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
+
+	// Check if the remote can reach us
+	checkAndOfferTunnel(serverData.Hostname)
 }
 
 func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKey string) {
@@ -658,6 +664,70 @@ func askAlias(hostname string) string {
 		return ""
 	}
 	return input
+}
+
+// checkAndOfferTunnel detects if the remote machine can reach us.
+// If not (asymmetric network), offers to start a tunnel so the remote can connect back.
+func checkAndOfferTunnel(remoteHostname string) {
+	// Check if our own IP is likely behind a NAT/router that blocks incoming
+	// We do this by checking if the remote stored our IP as reachable
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		return
+	}
+
+	// Find the remote machine in config
+	remoteMachine, ok := cfg.Machines[remoteHostname]
+	if !ok {
+		return
+	}
+
+	// Test if the remote can reach us: try connecting to our own SSH port from the remote's perspective
+	// We can't actually test this — but we CAN check if the remote's IP is on a different subnet
+	localIP := detectLocalIP()
+	if localIP == "" || remoteMachine.IP == "" {
+		return
+	}
+
+	// If remote has a tunnel configured, no need
+	if remoteMachine.Tunnel != "" {
+		return
+	}
+
+	// Simple heuristic: if we're on different /24 subnets, the remote likely can't reach us
+	localParts := strings.Split(localIP, ".")
+	remoteParts := strings.Split(remoteMachine.IP, ".")
+	if len(localParts) == 4 && len(remoteParts) == 4 {
+		sameSubnet := localParts[0] == remoteParts[0] && localParts[1] == remoteParts[1] && localParts[2] == remoteParts[2]
+		if sameSubnet {
+			return // same subnet, probably fine
+		}
+	}
+
+	// Different subnets — the remote probably can't reach us
+	fmt.Println()
+	fmt.Printf("⚠ Vous etes sur des reseaux differents (%s vs %s)\n", localIP, remoteMachine.IP)
+	fmt.Printf("  '%s' ne pourra probablement pas se connecter a cette machine.\n", remoteHostname)
+	fmt.Println()
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Lancer un tunnel pour que l'autre machine puisse se connecter ? [o/N]: ")
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+
+	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+		fmt.Println("  Tu peux le faire plus tard: hop tunnel quick")
+		return
+	}
+
+	// Launch hop tunnel quick
+	fmt.Println()
+	hopBin, _ := os.Executable()
+	tunnelCmd := exec.Command(hopBin, "tunnel", "quick")
+	tunnelCmd.Stdout = os.Stdout
+	tunnelCmd.Stderr = os.Stderr
+	tunnelCmd.Stdin = os.Stdin
+	tunnelCmd.Run()
 }
 
 func copyToClipboard(text string) error {
