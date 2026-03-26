@@ -1,0 +1,7 @@
+name = "hop-pair"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "HOP_KV"
+id = "" # À remplir après: wrangler kv:namespace create HOP_KV
