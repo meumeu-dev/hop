@@ -319,13 +319,17 @@ func runTunnelCloudflare() error {
 	tunnelURL := ""
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, "trycloudflare.com") {
+		// cloudflared prints: https://xxx-yyy-zzz.trycloudflare.com
+		// We need the full subdomain URL, not just "trycloudflare.com"
+		if strings.Contains(line, ".trycloudflare.com") {
 			for _, word := range strings.Fields(line) {
-				if strings.Contains(word, "trycloudflare.com") {
-					tunnelURL = strings.TrimRight(word, ".,;")
-					if !strings.HasPrefix(tunnelURL, "https://") {
-						tunnelURL = "https://" + tunnelURL
+				word = strings.Trim(word, ".,;\"'`|")
+				// Must have a subdomain (not just trycloudflare.com)
+				if strings.HasSuffix(word, ".trycloudflare.com") || strings.Contains(word, ".trycloudflare.com/") {
+					if !strings.HasPrefix(word, "https://") {
+						word = "https://" + word
 					}
+					tunnelURL = strings.TrimRight(word, "/")
 					break
 				}
 			}
@@ -362,25 +366,22 @@ func runTunnelSSH(provider string, sshArgs ...string) error {
 		return fmt.Errorf("%s: %w", provider, err)
 	}
 
+	// Read output silently, only show tunnel URL when found
 	go func() {
 		s := bufio.NewScanner(stderrPipe)
 		for s.Scan() {
-			line := s.Text()
-			fmt.Fprintln(os.Stderr, line)
-			checkAndRegisterTunnelURL(line, provider)
+			checkAndRegisterTunnelURL(s.Text(), provider)
 		}
 	}()
 
 	go func() {
 		s := bufio.NewScanner(stdoutPipe)
 		for s.Scan() {
-			line := s.Text()
-			fmt.Println(line)
-			checkAndRegisterTunnelURL(line, provider)
+			checkAndRegisterTunnelURL(s.Text(), provider)
 		}
 	}()
 
-	fmt.Printf("→ Tunnel %s actif.\n", provider)
+	fmt.Println("  En attente de l'URL du tunnel...")
 	fmt.Println("  Ctrl+C pour arreter.")
 	fmt.Println()
 
@@ -390,36 +391,35 @@ func runTunnelSSH(provider string, sshArgs ...string) error {
 	return nil
 }
 
-func checkAndRegisterTunnelURL(line string, provider string) {
-	// Look for URLs in the output
-	for _, word := range strings.Fields(line) {
-		// Clean the word
-		word = strings.Trim(word, ".,;\"'`()[]{}<>")
+// knownTunnelDomains are suffixes that indicate a real tunnel URL (not docs/marketing)
+var knownTunnelDomains = []string{
+	".trycloudflare.com",
+	".lhr.life",    // localhost.run
+	".bore.pub",    // bore
+	"bore.pub:",    // bore with port
+}
 
-		if strings.Contains(word, "https://") || strings.Contains(word, "http://") || strings.Contains(word, "tcp://") {
-			host := strings.TrimPrefix(word, "https://")
-			host = strings.TrimPrefix(host, "http://")
-			host = strings.TrimPrefix(host, "tcp://")
-			// Remove port if present for display but keep for registration
-			host = strings.Trim(host, "/")
-			if host != "" && strings.Contains(host, ".") && host != provider {
+func checkAndRegisterTunnelURL(line string, provider string) {
+	for _, word := range strings.Fields(line) {
+		word = strings.Trim(word, ".,;\"'`()[]{}<>|")
+
+		// Strip scheme
+		host := word
+		host = strings.TrimPrefix(host, "https://")
+		host = strings.TrimPrefix(host, "http://")
+		host = strings.TrimPrefix(host, "tcp://")
+		host = strings.TrimRight(host, "/")
+
+		if host == "" {
+			continue
+		}
+
+		// Only register if it matches a known tunnel domain
+		for _, suffix := range knownTunnelDomains {
+			if strings.Contains(host, suffix) {
 				fmt.Printf("\n→ Tunnel detecte: %s\n", host)
 				tunnel.Register(host)
-			}
-		}
-	}
-
-	// Also check for "Forwarding" lines like localhost.run outputs
-	if strings.Contains(line, "Forwarding") || strings.Contains(line, "forwarding") {
-		for _, word := range strings.Fields(line) {
-			word = strings.Trim(word, ".,;\"'`()[]{}<>")
-			if strings.HasPrefix(word, "https://") {
-				host := strings.TrimPrefix(word, "https://")
-				host = strings.Trim(host, "/")
-				if host != "" {
-					fmt.Printf("\n→ Tunnel detecte: %s\n", host)
-					tunnel.Register(host)
-				}
+				return
 			}
 		}
 	}

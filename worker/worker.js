@@ -181,10 +181,12 @@ export default {
       const tokenHash = await sha256(regToken);
 
       // Check if already registered with different token
+      // Allow override if existing entry is older than 5 minutes (key rotation after reset)
       const existing = await env.HOP_KV.get(key);
       if (existing) {
         const parsed = JSON.parse(existing);
-        if (parsed.tokenHash && parsed.tokenHash !== tokenHash) {
+        const age = Date.now() - (parsed.updated || 0);
+        if (parsed.tokenHash && parsed.tokenHash !== tokenHash && age < 5 * 60 * 1000) {
           return jsonResponse({ error: "machine already registered with different token" }, 403, corsHeaders);
         }
       }
