@@ -219,7 +219,7 @@ var tunnelQuickCmd = &cobra.Command{
 			fmt.Println("Provider de tunnel:")
 			fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
 			fmt.Println("  2) localhost.run  (zero install, via SSH)")
-			fmt.Println("  3) serveo.net    (zero install, via SSH)")
+			fmt.Println("  3) serveo.net    (zero install, via SSH, peut etre instable)")
 			fmt.Println("  4) bore.pub      (auto-install bore)")
 			fmt.Println("  5) Cloudflare    (tunnel permanent, necessite compte CF)")
 			fmt.Println("  6) Worker perso  (configurer ton propre relay)")
@@ -384,13 +384,30 @@ func runTunnelSSH(provider string, sshArgs ...string) {
 func checkAndRegisterTunnelURL(line string, provider string) {
 	// Look for URLs in the output
 	for _, word := range strings.Fields(line) {
-		if strings.Contains(word, provider) || strings.Contains(word, "https://") || strings.Contains(word, "tcp://") {
-			url := strings.TrimRight(word, ".,;\"'")
-			if strings.Contains(url, ".") && !strings.HasPrefix(url, "-") {
-				host := strings.TrimPrefix(url, "https://")
-				host = strings.TrimPrefix(host, "http://")
-				host = strings.TrimPrefix(host, "tcp://")
-				if host != "" && strings.Contains(host, ".") {
+		// Clean the word
+		word = strings.Trim(word, ".,;\"'`()[]{}<>")
+
+		if strings.Contains(word, "https://") || strings.Contains(word, "http://") || strings.Contains(word, "tcp://") {
+			host := strings.TrimPrefix(word, "https://")
+			host = strings.TrimPrefix(host, "http://")
+			host = strings.TrimPrefix(host, "tcp://")
+			// Remove port if present for display but keep for registration
+			host = strings.Trim(host, "/")
+			if host != "" && strings.Contains(host, ".") && host != provider {
+				fmt.Printf("\n→ Tunnel detecte: %s\n", host)
+				tunnel.Register(host)
+			}
+		}
+	}
+
+	// Also check for "Forwarding" lines like localhost.run outputs
+	if strings.Contains(line, "Forwarding") || strings.Contains(line, "forwarding") {
+		for _, word := range strings.Fields(line) {
+			word = strings.Trim(word, ".,;\"'`()[]{}<>")
+			if strings.HasPrefix(word, "https://") {
+				host := strings.TrimPrefix(word, "https://")
+				host = strings.Trim(host, "/")
+				if host != "" {
 					fmt.Printf("\n→ Tunnel detecte: %s\n", host)
 					tunnel.Register(host)
 				}
