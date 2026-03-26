@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -70,6 +71,7 @@ func buildPairData() (string, *pairing.PairData) {
 	data := &pairing.PairData{
 		Hostname:  hostname,
 		IP:        localIP,
+		IPs:       detectAllIPs(),
 		User:      user,
 		PublicKey: pubKey,
 		HostKey:   hostKey,
@@ -298,16 +300,23 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", response.Hostname)
 	fmt.Println("→ Clé SSH ajoutée")
 
-	// Add remote machine to config
+	// Add remote machine to config — find best reachable IP
 	cfg, _ := config.Load()
 	if cfg != nil {
 		if err := config.ValidateName(response.Hostname); err == nil {
+			bestIP := response.IP
+			if len(response.IPs) > 0 {
+				if reachable := findReachableIP(response.IPs); reachable != "" {
+					bestIP = reachable
+				}
+			}
+
 			tunnel := ""
 			if cfg.Cloudflare.Domain != "" {
 				tunnel = response.Hostname + "." + cfg.Cloudflare.Domain
 			}
 			cfg.Machines[response.Hostname] = config.Machine{
-				IP:       response.IP,
+				IP:       bestIP,
 				User:     response.User,
 				Tunnel:   tunnel,
 				Services: make(map[string]config.MachineService),
@@ -388,6 +397,7 @@ func buildClientResponse() (string, *pairing.PairData) {
 	response := &pairing.PairData{
 		Hostname:  hostname,
 		IP:        localIP,
+		IPs:       detectAllIPs(),
 		PublicKey: pubKey,
 		User:      user,
 		Version:   version,
@@ -528,14 +538,21 @@ func finalizePairClient(serverData *pairing.PairData) {
 
 	cfg, _ := config.Load()
 
-	// Add machine to config
+	// Add machine to config — find best reachable IP
+	bestIP := serverData.IP
+	if len(serverData.IPs) > 0 {
+		if reachable := findReachableIP(serverData.IPs); reachable != "" {
+			bestIP = reachable
+		}
+	}
+
 	tunnel := ""
 	if cfg != nil && cfg.Cloudflare.Domain != "" {
 		tunnel = serverData.Hostname + "." + cfg.Cloudflare.Domain
 	}
 
 	cfg.Machines[serverData.Hostname] = config.Machine{
-		IP:       serverData.IP,
+		IP:       bestIP,
 		User:     serverData.User,
 		Tunnel:   tunnel,
 		Services: make(map[string]config.MachineService),
@@ -653,13 +670,68 @@ func copyToClipboard(text string) error {
 }
 
 func detectLocalIP() string {
-	conn, err := exec.Command("hostname", "-I").Output()
+	// Best method: get the IP of the interface that routes to LAN
+	conn, err := net.DialTimeout("udp4", "192.168.0.1:80", 100*time.Millisecond)
 	if err == nil {
-		ips := splitSpaces(string(conn))
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		conn.Close()
+		if !localAddr.IP.IsLoopback() && !localAddr.IP.IsUnspecified() {
+			return localAddr.IP.String()
+		}
+	}
+
+	// Fallback: try common gateway
+	conn, err = net.DialTimeout("udp4", "10.0.0.1:80", 100*time.Millisecond)
+	if err == nil {
+		localAddr := conn.LocalAddr().(*net.UDPAddr)
+		conn.Close()
+		if !localAddr.IP.IsLoopback() && !localAddr.IP.IsUnspecified() {
+			return localAddr.IP.String()
+		}
+	}
+
+	// Last fallback: hostname -I, prefer 192.168.x.x
+	out, err := exec.Command("hostname", "-I").Output()
+	if err == nil {
+		ips := splitSpaces(string(out))
+		// First pass: prefer 192.168.x.x
+		for _, ip := range ips {
+			if strings.HasPrefix(ip, "192.168.") {
+				return ip
+			}
+		}
+		// Second pass: any non-loopback
 		for _, ip := range ips {
 			if ip != "" && ip != "127.0.0.1" {
 				return ip
 			}
+		}
+	}
+	return ""
+}
+
+func detectAllIPs() []string {
+	out, err := exec.Command("hostname", "-I").Output()
+	if err != nil {
+		return nil
+	}
+	raw := splitSpaces(string(out))
+	var ips []string
+	for _, ip := range raw {
+		if ip != "" && ip != "127.0.0.1" && !strings.Contains(ip, ":") { // skip IPv6
+			ips = append(ips, ip)
+		}
+	}
+	return ips
+}
+
+// findReachableIP tests all IPs and returns the first one reachable on SSH port
+func findReachableIP(ips []string) string {
+	for _, ip := range ips {
+		conn, err := net.DialTimeout("tcp", ip+":22", 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return ip
 		}
 	}
 	return ""

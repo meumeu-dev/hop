@@ -49,14 +49,15 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // PairData is what gets encrypted and sent through the worker
 type PairData struct {
-	Hostname  string `json:"hostname"`
-	IP        string `json:"ip,omitempty"`
-	User      string `json:"user"`
-	PublicKey string `json:"public_key"`
-	HostKey   string `json:"host_key,omitempty"`
-	Tunnel    string `json:"tunnel,omitempty"`
-	CFDomain  string `json:"cf_domain,omitempty"`
-	Version   string `json:"version,omitempty"`
+	Hostname  string   `json:"hostname"`
+	IP        string   `json:"ip,omitempty"`
+	IPs       []string `json:"ips,omitempty"`
+	User      string   `json:"user"`
+	PublicKey string   `json:"public_key"`
+	HostKey   string   `json:"host_key,omitempty"`
+	Tunnel    string   `json:"tunnel,omitempty"`
+	CFDomain  string   `json:"cf_domain,omitempty"`
+	Version   string   `json:"version,omitempty"`
 }
 
 // PairSession holds the state of a pairing session
