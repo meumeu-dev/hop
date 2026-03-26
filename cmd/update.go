@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -90,6 +92,24 @@ var updateCmd = &cobra.Command{
 		if len(data) < 1024 {
 			fmt.Fprintf(os.Stderr, "Erreur: fichier telecharge trop petit (%d bytes)\n", len(data))
 			os.Exit(1)
+		}
+
+		// Verify SHA256 checksum
+		checksumURL := findAssetURL(body, binaryName+".sha256")
+		if checksumURL != "" {
+			checksumData, err := downloadAsset(checksumURL)
+			if err == nil {
+				expectedHash := strings.Fields(string(checksumData))[0]
+				actualHash := sha256hex(data)
+				if expectedHash != actualHash {
+					fmt.Fprintf(os.Stderr, "Erreur: checksum invalide!\n")
+					fmt.Fprintf(os.Stderr, "  Attendu:  %s\n", expectedHash)
+					fmt.Fprintf(os.Stderr, "  Obtenu:   %s\n", actualHash)
+					fmt.Fprintln(os.Stderr, "Le binaire a peut-etre ete altere. Annulation.")
+					os.Exit(1)
+				}
+				fmt.Println("→ Checksum SHA256 verifie")
+			}
 		}
 
 		execPath, err := os.Executable()
@@ -253,6 +273,11 @@ func CheckUpdateBackground() {
 	if latest != "" && latest != version && latest != "v"+version {
 		fmt.Fprintf(os.Stderr, "\n→ Mise a jour disponible: %s -> %s (hop update)\n\n", version, latest)
 	}
+}
+
+func sha256hex(data []byte) string {
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
 }
 
 // githubToken returns a GitHub token from env or gh CLI
