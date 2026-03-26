@@ -11,6 +11,7 @@ import (
 
 	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
+	"github.com/meumeu-dev/hop/internal/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -211,6 +212,7 @@ func runRemoteTmux(m config.Machine, svc config.Service, serviceName string, ses
 }
 
 func detectTarget(m config.Machine) (target string, viaTunnel bool) {
+	// 1. Try LAN
 	if m.IP != "" {
 		conn, err := net.DialTimeout("tcp", m.IP+":22", 500*time.Millisecond)
 		if err == nil {
@@ -220,8 +222,8 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 		}
 	}
 
+	// 2. Try configured tunnel
 	if m.Tunnel != "" {
-		// Auto-install cloudflared if needed
 		if _, err := cloudflared.EnsureInstalled(); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			fmt.Fprintln(os.Stderr, "Installe cloudflared avec: hop tunnel setup")
@@ -229,6 +231,29 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 		}
 		fmt.Printf("→ Connexion via Cloudflare Tunnel (%s)\n", m.Tunnel)
 		return m.User + "@" + m.Tunnel, true
+	}
+
+	// 3. Try dynamic tunnel via worker (trycloudflare)
+	hostname := ""
+	// Find the machine name to resolve
+	cfg, _ := config.Load()
+	if cfg != nil {
+		for name, machine := range cfg.Machines {
+			if machine.IP == m.IP && machine.User == m.User {
+				hostname = name
+				break
+			}
+		}
+	}
+	if hostname != "" {
+		if dynURL, err := tunnel.Resolve(hostname); err == nil && dynURL != "" {
+			if _, err := cloudflared.EnsureInstalled(); err != nil {
+				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
+			return m.User + "@" + dynURL, true
+		}
 	}
 
 	fmt.Fprintln(os.Stderr, "Aucune connexion disponible.")

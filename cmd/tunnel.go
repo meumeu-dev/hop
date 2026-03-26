@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	cf "github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
+	"github.com/meumeu-dev/hop/internal/tunnel"
 	"github.com/spf13/cobra"
 )
 
@@ -206,8 +208,107 @@ func loadEnvFile(path string) {
 	}
 }
 
+var tunnelQuickCmd = &cobra.Command{
+	Use:   "quick",
+	Short: "Lance un tunnel temporaire (trycloudflare, zero config)",
+	Run: func(cmd *cobra.Command, args []string) {
+		cfPath, err := cf.EnsureInstalled()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("→ Lancement du tunnel temporaire...")
+
+		// Start cloudflared in background, capture URL from stderr
+		tunnelCmd := exec.Command(cfPath, "tunnel", "--url", "ssh://localhost:22")
+
+		// cloudflared outputs the URL on stderr
+		stderrPipe, err := tunnelCmd.StderrPipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		tunnelCmd.Stdout = os.Stdout
+
+		if err := tunnelCmd.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur lancement tunnel: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Read stderr to find the URL
+		scanner := bufio.NewScanner(stderrPipe)
+		tunnelURL := ""
+		for scanner.Scan() {
+			line := scanner.Text()
+			// cloudflared prints: https://xxx.trycloudflare.com
+			if strings.Contains(line, "trycloudflare.com") {
+				// Extract URL
+				for _, word := range strings.Fields(line) {
+					if strings.Contains(word, "trycloudflare.com") {
+						tunnelURL = strings.TrimRight(word, ".,;")
+						// Ensure https prefix
+						if !strings.HasPrefix(tunnelURL, "https://") {
+							tunnelURL = "https://" + tunnelURL
+						}
+						break
+					}
+				}
+				if tunnelURL != "" {
+					break
+				}
+			}
+		}
+
+		if tunnelURL == "" {
+			fmt.Fprintln(os.Stderr, "Erreur: impossible de recuperer l'URL du tunnel")
+			tunnelCmd.Process.Kill()
+			os.Exit(1)
+		}
+
+		// Extract hostname from URL
+		tunnelHost := strings.TrimPrefix(tunnelURL, "https://")
+
+		fmt.Printf("→ Tunnel actif: %s\n", tunnelURL)
+
+		// Register on worker
+		if err := tunnel.Register(tunnelHost); err != nil {
+			fmt.Printf("→ Warning: enregistrement worker echoue: %v\n", err)
+		} else {
+			fmt.Printf("→ Enregistre sur le worker (resolv auto pour les autres machines)\n")
+		}
+
+		// Store in config
+		cfg, _ := config.Load()
+		if cfg != nil {
+			hostname, _ := os.Hostname()
+			// Update tunnel for this machine if it exists in other machines' configs
+			// But mainly store it for pairing
+			_ = hostname
+			_ = cfg
+		}
+
+		fmt.Println()
+		fmt.Println("Le tunnel reste actif tant que ce processus tourne.")
+		fmt.Println("Ctrl+C pour arreter.")
+		fmt.Println()
+
+		// Keep re-registering every 30 minutes
+		go func() {
+			for {
+				<-time.After(30 * time.Minute)
+				tunnel.Register(tunnelHost)
+			}
+		}()
+
+		// Wait for cloudflared to exit
+		tunnelCmd.Wait()
+	},
+}
+
 func init() {
 	tunnelCmd.AddCommand(tunnelSetupCmd)
 	tunnelCmd.AddCommand(tunnelStatusCmd)
+	tunnelCmd.AddCommand(tunnelQuickCmd)
 	rootCmd.AddCommand(tunnelCmd)
 }

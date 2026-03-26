@@ -22,7 +22,28 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const WorkerURL = "https://hop-pair.meumeudev.workers.dev"
+const DefaultWorkerURL = "https://hop-pair.meumeudev.workers.dev"
+
+// WorkerURL returns the configured worker URL or the default
+func GetWorkerURL() string {
+	// Check if custom worker is configured
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(home + "/.hop/config.yml")
+	if err == nil {
+		// Simple scan for worker_url in yaml
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "worker_url:") {
+				url := strings.TrimSpace(strings.TrimPrefix(line, "worker_url:"))
+				url = strings.Trim(url, "\"'")
+				if url != "" {
+					return url
+				}
+			}
+		}
+	}
+	return DefaultWorkerURL
+}
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -209,7 +230,7 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 	}
 
 	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
-	resp, err := httpClient.Post(WorkerURL+"/pair", "application/json", strings.NewReader(body))
+	resp, err := httpClient.Post(GetWorkerURL()+"/pair", "application/json", strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
 	}
@@ -236,7 +257,7 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 
 // FetchPairData retrieves and decrypts pair data from the worker
 func FetchPairData(pairID string, code string) (*PairData, error) {
-	resp, err := httpClient.Get(WorkerURL + "/pair/" + pairID)
+	resp, err := httpClient.Get(GetWorkerURL() + "/pair/" + pairID)
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion: %w", err)
 	}
@@ -279,7 +300,7 @@ func SendResponse(session *PairSession, data *PairData) error {
 	}
 
 	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
-	req, err := http.NewRequest("POST", WorkerURL+"/pair/"+session.PairID+"/response", strings.NewReader(body))
+	req, err := http.NewRequest("POST", GetWorkerURL()+"/pair/"+session.PairID+"/response", strings.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -306,7 +327,7 @@ func SendResponse(session *PairSession, data *PairData) error {
 func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", WorkerURL+"/pair/"+session.PairID+"/response", nil)
+		req, _ := http.NewRequest("GET", GetWorkerURL()+"/pair/"+session.PairID+"/response", nil)
 		req.Header.Set("X-Pair-Token", session.Token)
 
 		resp, err := httpClient.Do(req)
@@ -347,7 +368,7 @@ func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, er
 
 // Cleanup deletes pairing data from the worker (requires token)
 func Cleanup(session *PairSession) {
-	req, _ := http.NewRequest("DELETE", WorkerURL+"/pair/"+session.PairID, nil)
+	req, _ := http.NewRequest("DELETE", GetWorkerURL()+"/pair/"+session.PairID, nil)
 	req.Header.Set("X-Pair-Token", session.Token)
 	httpClient.Do(req)
 }

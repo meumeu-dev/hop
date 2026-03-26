@@ -21,6 +21,7 @@ type Config struct {
 	Remotes    map[string]Remote  `yaml:"remotes,omitempty"`
 	API        APIConfig          `yaml:"api,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
+	WorkerURL  string             `yaml:"worker_url,omitempty"`
 }
 
 type Remote struct {

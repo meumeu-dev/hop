@@ -167,6 +167,51 @@ export default {
       return jsonResponse(JSON.parse(responseStored), 200, corsHeaders);
     }
 
+    // POST /tunnel/:machine_id — register tunnel URL (auth with token)
+    if (path.match(/^\/tunnel\/[a-zA-Z0-9_.-]+$/) && request.method === "POST") {
+      const machineId = path.split("/tunnel/")[1];
+      const body = await request.json();
+      const { url: tunnelUrl, token: regToken } = body;
+
+      if (!tunnelUrl || !regToken) {
+        return jsonResponse({ error: "missing url or token" }, 400, corsHeaders);
+      }
+
+      const key = `tunnel:${machineId}`;
+      const tokenHash = await sha256(regToken);
+
+      // Check if already registered with different token
+      const existing = await env.HOP_KV.get(key);
+      if (existing) {
+        const parsed = JSON.parse(existing);
+        if (parsed.tokenHash && parsed.tokenHash !== tokenHash) {
+          return jsonResponse({ error: "machine already registered with different token" }, 403, corsHeaders);
+        }
+      }
+
+      await env.HOP_KV.put(key, JSON.stringify({
+        url: tunnelUrl,
+        tokenHash: tokenHash,
+        updated: Date.now(),
+      }), { expirationTtl: 3600 }); // 1 hour TTL, machine should re-register
+
+      return jsonResponse({ ok: true }, 200, corsHeaders);
+    }
+
+    // GET /tunnel/:machine_id — resolve tunnel URL (public)
+    if (path.match(/^\/tunnel\/[a-zA-Z0-9_.-]+$/) && request.method === "GET") {
+      const machineId = path.split("/tunnel/")[1];
+      const key = `tunnel:${machineId}`;
+      const stored = await env.HOP_KV.get(key);
+
+      if (!stored) {
+        return jsonResponse({ error: "not found" }, 404, corsHeaders);
+      }
+
+      const parsed = JSON.parse(stored);
+      return jsonResponse({ url: parsed.url, updated: parsed.updated }, 200, corsHeaders);
+    }
+
     // Health check
     if (path === "/health") {
       return jsonResponse({ status: "ok", service: "hop-pair" }, 200, corsHeaders);
