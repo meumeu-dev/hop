@@ -214,48 +214,65 @@ var tunnelQuickCmd = &cobra.Command{
 	Use:   "quick",
 	Short: "Lance un tunnel temporaire (zero config, plusieurs providers)",
 	Run: func(cmd *cobra.Command, args []string) {
-		if tunnelProvider == "" {
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Println("Provider de tunnel:")
-			fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
-			fmt.Println("  2) localhost.run  (zero install, via SSH)")
-			fmt.Println("  3) bore.pub      (auto-install bore)")
-			fmt.Println("  4) Cloudflare    (tunnel permanent, necessite compte CF)")
-			fmt.Println("  5) Worker perso  (configurer ton propre relay)")
-			fmt.Print("Choix [1]: ")
-			choice, _ := reader.ReadString('\n')
-			choice = strings.TrimSpace(choice)
-			switch choice {
-			case "2", "localhost.run":
-				tunnelProvider = "localhost.run"
-			case "3", "bore":
-				tunnelProvider = "bore"
-			case "4", "cloudflare", "cf":
-				tunnelProvider = "cloudflare"
-			case "5", "worker":
-				tunnelProvider = "worker"
-			default:
-				tunnelProvider = "trycloudflare"
+		for {
+			if tunnelProvider == "" {
+				tunnelProvider = askTunnelProvider()
 			}
-			fmt.Println()
-		}
 
-		switch tunnelProvider {
-		case "trycloudflare":
-			runTunnelCloudflare()
-		case "localhost.run":
-			runTunnelSSH("localhost.run", "ssh", "-R", "80:localhost:22", "nokey@localhost.run")
-		case "bore":
-			runTunnelBore()
-		case "cloudflare":
-			runTunnelCFPermanent()
-		case "worker":
-			runTunnelWorkerSetup()
-		default:
-			fmt.Fprintf(os.Stderr, "Provider inconnu: %s\n", tunnelProvider)
-			os.Exit(1)
+			var err error
+			switch tunnelProvider {
+			case "trycloudflare":
+				err = runTunnelCloudflare()
+			case "localhost.run":
+				err = runTunnelSSH("localhost.run", "ssh", "-R", "80:localhost:22", "nokey@localhost.run")
+			case "bore":
+				err = runTunnelBore()
+			case "cloudflare":
+				runTunnelCFPermanent()
+				return
+			case "worker":
+				runTunnelWorkerSetup()
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "Provider inconnu: %s\n", tunnelProvider)
+				os.Exit(1)
+			}
+
+			if err == nil {
+				return // tunnel ran and exited normally
+			}
+
+			fmt.Fprintf(os.Stderr, "\n→ Tunnel echoue: %v\n\n", err)
+			fmt.Println("Essayer un autre provider ?")
+			tunnelProvider = "" // reset to show menu again
 		}
 	},
+}
+
+func askTunnelProvider() string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Provider de tunnel:")
+	fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
+	fmt.Println("  2) localhost.run  (zero install, via SSH)")
+	fmt.Println("  3) bore.pub      (auto-install bore)")
+	fmt.Println("  4) Cloudflare    (tunnel permanent, necessite compte CF)")
+	fmt.Println("  5) Worker perso  (configurer ton propre relay)")
+	fmt.Print("Choix [1]: ")
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
+	fmt.Println()
+	switch choice {
+	case "2", "localhost.run":
+		return "localhost.run"
+	case "3", "bore":
+		return "bore"
+	case "4", "cloudflare", "cf":
+		return "cloudflare"
+	case "5", "worker":
+		return "worker"
+	default:
+		return "trycloudflare"
+	}
 }
 
 func registerAndKeepAlive(tunnelHost string) {
@@ -278,11 +295,10 @@ func registerAndKeepAlive(tunnelHost string) {
 	}()
 }
 
-func runTunnelCloudflare() {
+func runTunnelCloudflare() error {
 	cfPath, err := cf.EnsureInstalled()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("cloudflared: %w", err)
 	}
 
 	fmt.Println("→ Lancement du tunnel trycloudflare...")
@@ -290,14 +306,12 @@ func runTunnelCloudflare() {
 	tunnelCmd := exec.Command(cfPath, "tunnel", "--url", "ssh://localhost:22")
 	stderrPipe, err := tunnelCmd.StderrPipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("pipe: %w", err)
 	}
 	tunnelCmd.Stdout = os.Stdout
 
 	if err := tunnelCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur lancement tunnel: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("lancement: %w", err)
 	}
 
 	scanner := bufio.NewScanner(stderrPipe)
@@ -321,36 +335,32 @@ func runTunnelCloudflare() {
 	}
 
 	if tunnelURL == "" {
-		fmt.Fprintln(os.Stderr, "Erreur: impossible de recuperer l'URL du tunnel")
 		tunnelCmd.Process.Kill()
-		os.Exit(1)
+		return fmt.Errorf("impossible de recuperer l'URL du tunnel")
 	}
 
 	tunnelHost := strings.TrimPrefix(tunnelURL, "https://")
 	fmt.Printf("→ Tunnel actif: %s\n", tunnelURL)
 
 	registerAndKeepAlive(tunnelHost)
-	tunnelCmd.Wait()
+	return tunnelCmd.Wait()
 }
 
-func runTunnelSSH(provider string, sshArgs ...string) {
+func runTunnelSSH(provider string, sshArgs ...string) error {
 	fmt.Printf("→ Lancement du tunnel via %s...\n", provider)
 	fmt.Println("  (zero installation requise)")
 	fmt.Println()
 
 	tunnelCmd := exec.Command(sshArgs[0], sshArgs[1:]...)
 
-	// Capture output to find the assigned URL/port
 	stderrPipe, _ := tunnelCmd.StderrPipe()
 	stdoutPipe, _ := tunnelCmd.StdoutPipe()
 	tunnelCmd.Stdin = os.Stdin
 
 	if err := tunnelCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("%s: %w", provider, err)
 	}
 
-	// Read output for tunnel URL
 	go func() {
 		s := bufio.NewScanner(stderrPipe)
 		for s.Scan() {
@@ -373,7 +383,10 @@ func runTunnelSSH(provider string, sshArgs ...string) {
 	fmt.Println("  Ctrl+C pour arreter.")
 	fmt.Println()
 
-	tunnelCmd.Wait()
+	if err := tunnelCmd.Wait(); err != nil {
+		return fmt.Errorf("%s: %w", provider, err)
+	}
+	return nil
 }
 
 func checkAndRegisterTunnelURL(line string, provider string) {
@@ -411,8 +424,11 @@ func checkAndRegisterTunnelURL(line string, provider string) {
 	}
 }
 
-func runTunnelBore() {
+func runTunnelBore() error {
 	borePath := findOrInstallBore()
+	if borePath == "" {
+		return fmt.Errorf("impossible d'installer bore")
+	}
 
 	fmt.Println("→ Lancement du tunnel via bore.pub...")
 
@@ -423,8 +439,7 @@ func runTunnelBore() {
 	stdoutPipe, _ := tunnelCmd.StdoutPipe()
 
 	if err := tunnelCmd.Start(); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("bore: %w", err)
 	}
 
 	go func() {
@@ -432,7 +447,6 @@ func runTunnelBore() {
 		for s.Scan() {
 			line := s.Text()
 			fmt.Fprintln(os.Stderr, line)
-			// bore prints: listening at bore.pub:<port>
 			if strings.Contains(line, "bore.pub:") {
 				for _, word := range strings.Fields(line) {
 					if strings.Contains(word, "bore.pub:") {
@@ -453,7 +467,10 @@ func runTunnelBore() {
 	}()
 
 	fmt.Println("  Ctrl+C pour arreter.")
-	tunnelCmd.Wait()
+	if err := tunnelCmd.Wait(); err != nil {
+		return fmt.Errorf("bore: %w", err)
+	}
+	return nil
 }
 
 func findOrInstallBore() string {
@@ -493,14 +510,13 @@ func findOrInstallBore() string {
 	dlCmd := exec.Command("curl", "-sSL", "-o", tmpFile, url)
 	if err := dlCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur telechargement bore: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Installe manuellement: https://github.com/ekzhang/bore")
-		os.Exit(1)
+		return ""
 	}
 
 	extractCmd := exec.Command("tar", "-xzf", tmpFile, "-C", binDir, "bore")
 	if err := extractCmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur extraction: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "Erreur extraction bore: %v\n", err)
+		return ""
 	}
 	os.Remove(tmpFile)
 	os.Chmod(borePath, 0755)
