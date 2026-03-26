@@ -22,7 +22,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const WorkerURL = "https://hop-pair.meumeu-dev.workers.dev"
+const WorkerURL = "https://hop-pair.meumeudev.workers.dev"
 
 // PairData is what gets encrypted and sent through the worker
 type PairData struct {

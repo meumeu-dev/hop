@@ -4,4 +4,4 @@ compatibility_date = "2024-01-01"
 
 [[kv_namespaces]]
 binding = "HOP_KV"
-id = "" # À remplir après: wrangler kv:namespace create HOP_KV
+id = "536adf017eac422a97a74e8ea1a7dcbb"

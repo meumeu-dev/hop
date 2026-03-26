@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/meumeu-dev/hop/internal/config"
+	"github.com/meumeu-dev/hop/internal/pairing"
 )
 
 //go:embed static/*
@@ -162,6 +163,7 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/remotes", handleRemotes)
 	mux.HandleFunc("/api/remotes/", handleRemoteRoute)
 	mux.HandleFunc("/api/cloudflare", handleCloudflare)
+	mux.HandleFunc("/api/pair", handlePair)
 }
 
 func Start(port int, open bool) error {
@@ -718,4 +720,80 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w)
+}
+
+type pairReq struct {
+	Code string `json:"code"`
+}
+
+func handlePair(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	limitBody(r)
+
+	var req pairReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad request", 400)
+		return
+	}
+
+	// Fetch server's pair data
+	serverData, err := pairing.FetchPairData(req.Code)
+	if err != nil {
+		jsonError(w, err.Error(), 400)
+		return
+	}
+
+	// Ensure local SSH key
+	hostname, _ := os.Hostname()
+	_, pubKey, err := pairing.EnsureSSHKey()
+	if err != nil {
+		jsonError(w, "cannot generate SSH key", 500)
+		return
+	}
+
+	// Send response
+	user := os.Getenv("USER")
+	response := &pairing.PairData{
+		Hostname:  hostname,
+		PublicKey: pubKey,
+		User:      user,
+	}
+	if err := pairing.SendResponse(req.Code, response); err != nil {
+		jsonError(w, "cannot send response", 500)
+		return
+	}
+
+	// Add server's key locally
+	pairing.AddAuthorizedKey(serverData.PublicKey)
+
+	// Add machine to config
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	cfg, err := config.Load()
+	if err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	cfg.Machines[serverData.Hostname] = config.Machine{
+		IP:       serverData.IP,
+		User:     serverData.User,
+		Tunnel:   serverData.Tunnel,
+		Services: make(map[string]config.MachineService),
+	}
+
+	if err := cfg.Save(); err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":       true,
+		"hostname": serverData.Hostname,
+	})
 }

@@ -172,6 +172,7 @@
         <div class="nav">
             <button class="active" onclick="showPage('local')">Local</button>
             <button onclick="showPage('remotes')">Remotes</button>
+            <button onclick="showPage('pairing')">Pairing</button>
         </div>
     </header>
 
@@ -243,6 +244,46 @@
             <div class="modal-actions">
                 <button class="btn-cancel" onclick="closeModal('service')">Annuler</button>
                 <button class="btn-save" onclick="saveService()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PAIRING PAGE -->
+    <div class="container page" id="page-pairing">
+        <div class="grid">
+            <div class="card full">
+                <h2>Pairing</h2>
+                <p style="color: #8b949e; margin-bottom: 16px;">
+                    Le pairing permet de connecter deux machines en un seul geste. Les clés SSH sont échangées automatiquement via un relais chiffré.
+                </p>
+                <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Cette machine attend un pairing</h4>
+                        <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Lance cette commande dans le terminal :</p>
+                        <code style="background: #161b22; padding: 8px 12px; border-radius: 6px; display: block; font-size: 14px; color: #3fb950;">hop pair</code>
+                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Un code a 6 chiffres s'affichera. Donne-le a l'autre machine.</p>
+                    </div>
+                    <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Se connecter a une machine</h4>
+                        <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Entre le code affiche sur l'autre machine :</p>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="pair-code" placeholder="847291" maxlength="6" style="flex:1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e1e4e8; font-size: 18px; text-align: center; letter-spacing: 4px;">
+                            <button onclick="doPairing()" style="background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Connecter</button>
+                        </div>
+                        <p id="pair-status" style="font-size: 12px; margin-top: 8px; color: #8b949e;"></p>
+                    </div>
+                </div>
+            </div>
+            <div class="card full">
+                <h2>Comment ca marche</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 1.8;">
+                    <p><strong style="color:#e1e4e8;">1.</strong> La machine distante lance <code>hop pair</code> → genere un code a 6 chiffres</p>
+                    <p><strong style="color:#e1e4e8;">2.</strong> Ses infos (IP, cle SSH) sont chiffrees avec ce code et envoyees au relais</p>
+                    <p><strong style="color:#e1e4e8;">3.</strong> Tu entres le code ici → le relais te donne les infos chiffrees → tu dechiffres avec le code</p>
+                    <p><strong style="color:#e1e4e8;">4.</strong> Les cles SSH sont echangees automatiquement</p>
+                    <p><strong style="color:#e1e4e8;">5.</strong> La machine est ajoutee a ta config → <code>hop ssh nom</code> marche direct</p>
+                    <p style="margin-top: 8px; color: #3fb950;">Le relais (Cloudflare Worker) ne peut jamais lire tes donnees. Tout est chiffre de bout en bout.</p>
+                </div>
             </div>
         </div>
     </div>
@@ -632,6 +673,39 @@
             if (!confirm(`Supprimer le remote '${name}' ?`)) return;
             await fetch(API + `/api/remotes/${name}`, {method: 'DELETE', headers: {'X-Hop-CSRF': csrfToken}});
             loadRemotes();
+        }
+
+        // --- Pairing ---
+        async function doPairing() {
+            const code = document.getElementById('pair-code').value.trim();
+            const status = document.getElementById('pair-status');
+            if (!/^\d{6}$/.test(code)) {
+                status.textContent = 'Le code doit etre 6 chiffres.';
+                status.style.color = '#f85149';
+                return;
+            }
+            status.textContent = 'Connexion en cours...';
+            status.style.color = '#58a6ff';
+
+            try {
+                const res = await fetch(API + '/api/pair', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({code}),
+                });
+                const data = await res.json();
+                if (data.ok) {
+                    status.textContent = 'Pairing reussi avec ' + (data.hostname || 'la machine') + ' !';
+                    status.style.color = '#3fb950';
+                    loadConfig();
+                } else {
+                    status.textContent = data.error || 'Erreur de pairing.';
+                    status.style.color = '#f85149';
+                }
+            } catch (e) {
+                status.textContent = 'Erreur de connexion.';
+                status.style.color = '#f85149';
+            }
         }
 
         // --- Init ---
