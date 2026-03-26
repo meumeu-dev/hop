@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
-	"github.com/meumeu-dev/hop/internal/dashboard"
 	"github.com/spf13/cobra"
 )
 
@@ -22,46 +21,10 @@ var initCmd = &cobra.Command{
 		fmt.Println("=== hop init ===")
 		fmt.Println()
 
-		// Check git config
-		nameOut, _ := exec.Command("git", "config", "--global", "user.name").Output()
-		emailOut, _ := exec.Command("git", "config", "--global", "user.email").Output()
-
-		gitName := strings.TrimSpace(string(nameOut))
-		gitEmail := strings.TrimSpace(string(emailOut))
-
-		if gitName == "" {
-			fmt.Print("Ton nom (pour git): ")
-			gitName, _ = reader.ReadString('\n')
-			gitName = strings.TrimSpace(gitName)
-			exec.Command("git", "config", "--global", "user.name", "--", gitName).Run()
-		} else {
-			fmt.Printf("Git name: %s\n", gitName)
-		}
-
-		if gitEmail == "" {
-			fmt.Print("Ton email (pour git): ")
-			gitEmail, _ = reader.ReadString('\n')
-			gitEmail = strings.TrimSpace(gitEmail)
-			exec.Command("git", "config", "--global", "user.email", "--", gitEmail).Run()
-		} else {
-			fmt.Printf("Git email: %s\n", gitEmail)
-		}
-
-		fmt.Println()
-
 		// Init hop dir
 		if err := config.Init(); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
-		}
-
-		hopDir := config.HopDir()
-
-		// Init git repo in ~/.hop
-		gitDir := filepath.Join(hopDir, ".git")
-		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			fmt.Println("→ Initialisation du repo git dans ~/.hop...")
-			exec.Command("git", "-C", hopDir, "init").Run()
 		}
 
 		// Ask for Cloudflare config
@@ -84,70 +47,14 @@ var initCmd = &cobra.Command{
 
 		cfg.Save()
 
-		// Ask for remote repo
-		fmt.Print("URL du repo distant pour sync (laisser vide pour skip): ")
-		remote, _ := reader.ReadString('\n')
-		remote = strings.TrimSpace(remote)
-
-		if remote != "" {
-			exec.Command("git", "-C", hopDir, "remote", "add", "origin", remote).Run()
-			fmt.Printf("→ Remote ajouté: %s\n", remote)
-		}
-
-		// Create default install.sh
-		installPath := filepath.Join(hopDir, "install.sh")
-		if _, err := os.Stat(installPath); os.IsNotExist(err) {
-			defaultInstall := `#!/bin/bash
-# Script d'installation des outils — lancé par 'hop install'
-set -euo pipefail
-echo "=== Installation des outils ==="
-
-# hop
-if ! command -v hop &>/dev/null; then
-    echo "Installation de hop..."
-    curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
-fi
-
-# tmux
-if ! command -v tmux &>/dev/null; then
-    echo "Installation de tmux..."
-    sudo apt install tmux -y 2>/dev/null || sudo yum install tmux -y 2>/dev/null
-fi
-
-echo "=== Installation terminée ==="
-`
-			os.WriteFile(installPath, []byte(defaultInstall), 0755)
-		}
-
-		// Initial commit (allowlist — no secrets)
-		exec.Command("git", "-C", hopDir, "add", "config.yml", ".gitignore", "install.sh").Run()
-		exec.Command("git", "-C", hopDir, "add", "dotfiles/").Run()
-		exec.Command("git", "-C", hopDir, "commit", "-m", "hop init").Run()
-
 		fmt.Println()
-		fmt.Println("→ hop est prêt !")
+		fmt.Println("→ hop est pret !")
 		fmt.Println()
-
-		// Ask CLI or Dashboard
-		fmt.Println("Comment veux-tu configurer hop ?")
-		fmt.Println("  1) Dashboard (navigateur)")
-		fmt.Println("  2) CLI (terminal)")
-		fmt.Print("Choix [1/2]: ")
-		choice, _ := reader.ReadString('\n')
-		choice = strings.TrimSpace(choice)
-
-		if choice == "1" {
-			fmt.Println()
-			fmt.Println("→ Lancement du dashboard...")
-			dashboard.Start(8080, true)
-		} else {
-			fmt.Println()
-			fmt.Println("Prochaines étapes:")
-			fmt.Println("  hop add machine rpi 192.168.1.50 --user pi")
-			fmt.Println("  hop add service claude --cmd \"claude --dangerously-skip-permissions\" --desc \"Claude\"")
-			fmt.Println("  hop list")
-			fmt.Println("  hop dashboard   — pour ouvrir le dashboard plus tard")
-		}
+		fmt.Println("Prochaines etapes:")
+		fmt.Println("  hop pair                — pairer avec une autre machine")
+		fmt.Println("  hop add machine pc1 192.168.0.10 --user user")
+		fmt.Println("  hop ssh pc1             — se connecter")
+		fmt.Println("  hop dashboard           — interface web")
 	},
 }
 
