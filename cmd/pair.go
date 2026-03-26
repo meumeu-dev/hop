@@ -91,16 +91,61 @@ func runPairServer() {
 		return
 	}
 
-	// Default: try LAN first (3s), then fall back to worker
-	fmt.Println("→ Recherche sur le réseau local...")
-	response, err := pairing.StartLANServerWithTimeout(code, data, 3*time.Second)
-	if err == nil {
-		finalizePairServer(response, code, data)
-		return
+	// Default: register on worker + broadcast LAN simultaneously
+	// First who responds wins
+	fmt.Println("→ Enregistrement sur le relay...")
+	session, err := pairing.PublishPairData(code, data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
 	}
+	defer pairing.Cleanup(session)
 
-	fmt.Println("→ Pas de réponse LAN, bascule sur le relay...")
-	runPairServerWorker(code, data)
+	pairToken := session.PairID + "." + code + "." + session.Token
+
+	fmt.Println()
+	fmt.Println("Sur l'autre machine, lance:")
+	fmt.Printf("  hop pair %s\n", pairToken)
+	fmt.Println()
+	fmt.Printf("Ou sur le meme reseau:  hop pair %s\n", code)
+
+	if err := copyToClipboard(pairToken); err == nil {
+		fmt.Println("\n(token copie dans le presse-papier)")
+	}
+	fmt.Println()
+	fmt.Println("En attente de connexion (LAN + relay)... (expire dans 2 min)")
+
+	// Race: LAN broadcast vs worker poll
+	type pairResult struct {
+		data *pairing.PairData
+		via  string
+	}
+	resultCh := make(chan pairResult, 1)
+
+	// Start LAN broadcast in background
+	go func() {
+		resp, err := pairing.StartLANServerWithTimeout(code, data, 2*time.Minute)
+		if err == nil {
+			resultCh <- pairResult{resp, "LAN"}
+		}
+	}()
+
+	// Poll worker in background
+	go func() {
+		resp, err := pairing.WaitForResponse(session, 2*time.Minute)
+		if err == nil {
+			resultCh <- pairResult{resp, "relay"}
+		}
+	}()
+
+	select {
+	case result := <-resultCh:
+		fmt.Printf("\n→ Connexion recue via %s\n", result.via)
+		finalizePairServer(result.data, code, data)
+	case <-time.After(2 * time.Minute):
+		fmt.Fprintln(os.Stderr, "\nTimeout: aucune reponse recue.")
+		os.Exit(1)
+	}
 }
 
 func runPairServerLAN(code string, data *pairing.PairData) {
