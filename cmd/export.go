@@ -131,7 +131,7 @@ var importCmd = &cobra.Command{
 		if strings.HasPrefix(source, "cloud:") {
 			// Cloud import
 			pairID := strings.TrimPrefix(source, "cloud:")
-			if pairID == "" {
+			if pairID == "" || strings.Contains(pairID, "/") || strings.Contains(pairID, "..") {
 				fmt.Fprintln(os.Stderr, "Token invalide")
 				os.Exit(1)
 			}

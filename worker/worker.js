@@ -1,5 +1,5 @@
 // Cloudflare Worker — hop pairing relay
-// Stockage temporaire chiffré, expire après 5 min
+// Stockage temporaire chiffré, expire après 2 min
 // Le worker ne peut JAMAIS lire les données (chiffrées côté client)
 
 export default {
@@ -46,7 +46,7 @@ export default {
         responsePosted: false,
       }), { expirationTtl: 120 });
 
-      return jsonResponse({ ok: true, pair_id: pairId, token: token, expires_in: 300 }, 200, corsHeaders);
+      return jsonResponse({ ok: true, pair_id: pairId, token: token, expires_in: 120 }, 200, corsHeaders);
     }
 
     // GET /pair/:id — le client récupère les données chiffrées (public, mais id is unguessable UUID)
