@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
@@ -16,6 +18,20 @@ var resetCmd = &cobra.Command{
 
 		if _, err := os.Stat(hopDir); os.IsNotExist(err) {
 			fmt.Println("Rien a reset, ~/.hop n'existe pas.")
+			return
+		}
+
+		fmt.Printf("Ceci va supprimer toute la config dans %s\n", hopDir)
+		fmt.Println("(machines, services, cles SSH, secrets)")
+		fmt.Println()
+
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Confirmer le reset ? [oui/N]: ")
+		confirm, _ := reader.ReadString('\n')
+		confirm = strings.TrimSpace(strings.ToLower(confirm))
+
+		if confirm != "oui" && confirm != "yes" {
+			fmt.Println("Annule.")
 			return
 		}
 
