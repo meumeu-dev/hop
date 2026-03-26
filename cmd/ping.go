@@ -22,7 +22,7 @@ var pingCmd = &cobra.Command{
 		}
 
 		if len(args) == 1 {
-			name := args[0]
+			name := cfg.ResolveAlias(args[0])
 			m, ok := cfg.Machines[name]
 			if !ok {
 				fmt.Fprintf(os.Stderr, "Machine '%s' non trouvee.\n", name)

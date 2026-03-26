@@ -46,6 +46,12 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		// Resolve aliases
+		serviceName = cfg.ResolveAlias(serviceName)
+		if machineName != "" {
+			machineName = cfg.ResolveAlias(machineName)
+		}
+
 		service, serviceOk := cfg.Services[serviceName]
 
 		if !serviceOk {

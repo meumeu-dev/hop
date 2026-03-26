@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Machines   map[string]Machine `yaml:"machines"`
 	Services   map[string]Service `yaml:"services"`
+	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Remotes    map[string]Remote  `yaml:"remotes,omitempty"`
 	API        APIConfig          `yaml:"api,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
@@ -210,6 +211,16 @@ func (s *Secrets) Save() error {
 		return err
 	}
 	return os.Chmod(path, 0600)
+}
+
+// ResolveAlias returns the real name if an alias exists, otherwise the input
+func (c *Config) ResolveAlias(name string) string {
+	if c.Aliases != nil {
+		if target, ok := c.Aliases[name]; ok {
+			return target
+		}
+	}
+	return name
 }
 
 func Load() (*Config, error) {
