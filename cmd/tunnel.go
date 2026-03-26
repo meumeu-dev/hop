@@ -254,22 +254,19 @@ func askTunnelProvider() string {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Provider de tunnel:")
 	fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
-	fmt.Println("  2) localhost.run  (zero install, via SSH)")
-	fmt.Println("  3) bore.pub      (auto-install bore)")
-	fmt.Println("  4) Cloudflare    (tunnel permanent, necessite compte CF)")
-	fmt.Println("  5) Worker perso  (configurer ton propre relay)")
+	fmt.Println("  2) bore.pub      (auto-install bore)")
+	fmt.Println("  3) Cloudflare    (tunnel permanent, necessite compte CF)")
+	fmt.Println("  4) Worker perso  (configurer ton propre relay)")
 	fmt.Print("Choix [1]: ")
 	choice, _ := reader.ReadString('\n')
 	choice = strings.TrimSpace(choice)
 	fmt.Println()
 	switch choice {
-	case "2", "localhost.run":
-		return "localhost.run"
-	case "3", "bore":
+	case "2", "bore":
 		return "bore"
-	case "4", "cloudflare", "cf":
+	case "3", "cloudflare", "cf":
 		return "cloudflare"
-	case "5", "worker":
+	case "4", "worker":
 		return "worker"
 	default:
 		return "trycloudflare"

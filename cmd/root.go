@@ -255,9 +255,8 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 		return m.User + "@" + m.Tunnel, true
 	}
 
-	// 3. Try dynamic tunnel via worker (trycloudflare)
+	// 3. Try dynamic tunnel via worker
 	hostname := ""
-	// Find the machine name to resolve
 	cfg, _ := config.Load()
 	if cfg != nil {
 		for name, machine := range cfg.Machines {
@@ -269,12 +268,19 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	}
 	if hostname != "" {
 		if dynURL, err := tunnel.Resolve(hostname); err == nil && dynURL != "" {
-			if _, err := cloudflared.EnsureInstalled(); err != nil {
-				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-				os.Exit(1)
+			// Determine tunnel type by domain
+			if strings.HasSuffix(dynURL, ".trycloudflare.com") {
+				// Cloudflare tunnel — use cloudflared proxy
+				if _, err := cloudflared.EnsureInstalled(); err != nil {
+					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
+				return m.User + "@" + dynURL, true
 			}
+			// Other tunnels (localhost.run, bore) — direct SSH to hostname:port
 			fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
-			return m.User + "@" + dynURL, true
+			return m.User + "@" + dynURL, false
 		}
 	}
 
