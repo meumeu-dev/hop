@@ -136,6 +136,17 @@ func runPairServer() {
 				Tunnel:   tunnel,
 				Services: make(map[string]config.MachineService),
 			}
+
+			// Ask for alias
+			alias := askAlias(response.Hostname)
+			if alias != "" {
+				if cfg.Aliases == nil {
+					cfg.Aliases = make(map[string]string)
+				}
+				cfg.Aliases[alias] = response.Hostname
+				fmt.Printf("→ Alias '%s' -> '%s'\n", alias, response.Hostname)
+			}
+
 			cfg.Save()
 		}
 	}
@@ -146,7 +157,16 @@ func runPairServer() {
 		pairing.ApplyCFConfig(response.CFDomain)
 	}
 
-	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", response.Hostname)
+	finalName := response.Hostname
+	if cfg != nil && cfg.Aliases != nil {
+		for a, t := range cfg.Aliases {
+			if t == response.Hostname {
+				finalName = a
+				break
+			}
+		}
+	}
+	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
 }
 
 func runPairClient(pairToken string) {
@@ -237,7 +257,23 @@ func runPairClient(pairToken string) {
 		Tunnel:   tunnel,
 		Services: make(map[string]config.MachineService),
 	}
+
+	// Ask for alias
+	alias := askAlias(serverData.Hostname)
+	if alias != "" {
+		if cfg.Aliases == nil {
+			cfg.Aliases = make(map[string]string)
+		}
+		cfg.Aliases[alias] = serverData.Hostname
+		fmt.Printf("→ Alias '%s' -> '%s'\n", alias, serverData.Hostname)
+	}
+
 	cfg.Save()
+
+	finalName := serverData.Hostname
+	if alias != "" {
+		finalName = alias
+	}
 
 	fmt.Println()
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", serverData.Hostname)
@@ -257,7 +293,7 @@ func runPairClient(pairToken string) {
 		}
 	}
 
-	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", serverData.Hostname)
+	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
 }
 
 func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKey string) {
@@ -302,6 +338,21 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 	fmt.Println()
 	fmt.Printf("  → Pour finaliser, lance sur %s:\n", server.Hostname)
 	fmt.Printf("    hop tunnel setup %s\n", server.Hostname)
+}
+
+func askAlias(hostname string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("\nAlias pour '%s' (entree pour skip): ", hostname)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return ""
+	}
+	if err := config.ValidateName(input); err != nil {
+		fmt.Fprintf(os.Stderr, "Alias invalide: %v\n", err)
+		return ""
+	}
+	return input
 }
 
 func copyToClipboard(text string) error {
