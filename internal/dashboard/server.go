@@ -78,13 +78,22 @@ type remoteReq struct {
 	Key  string `json:"key"`
 }
 
-func isLocalhostOrigin(origin string) bool {
+func isAllowedOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil {
 		return false
 	}
 	host := u.Hostname()
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	// Always allow localhost
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	// Allow private IPs (LAN access)
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsPrivate()
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -151,11 +160,11 @@ func dashboardAuthMiddleware(token string, next http.Handler) http.Handler {
 				jsonError(w, "forbidden", 403)
 				return
 			}
-			if origin != "" && !isLocalhostOrigin(origin) {
+			if origin != "" && !isAllowedOrigin(origin) {
 				jsonError(w, "forbidden", 403)
 				return
 			}
-			if origin == "" && referer != "" && !isLocalhostOrigin(referer) {
+			if origin == "" && referer != "" && !isAllowedOrigin(referer) {
 				jsonError(w, "forbidden", 403)
 				return
 			}
@@ -194,6 +203,10 @@ func registerAPIRoutes(mux *http.ServeMux) {
 }
 
 func Start(port int, open bool) error {
+	return StartWithBind(port, "127.0.0.1", open)
+}
+
+func StartWithBind(port int, bind string, open bool) error {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux)
 
@@ -205,17 +218,21 @@ func Start(port int, open bool) error {
 	rand.Read(tokenBytes)
 	csrfToken := hex.EncodeToString(tokenBytes)
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr := fmt.Sprintf("%s:%d", bind, port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("port %d deja utilise: %w", port, err)
 	}
 
-	url := fmt.Sprintf("http://localhost:%d", port)
-	fmt.Printf("-> Dashboard sur %s (localhost uniquement)\n", url)
+	if bind == "0.0.0.0" {
+		fmt.Printf("-> Dashboard sur http://%s:%d (reseau)\n", getLocalIP(), port)
+		fmt.Println("   ⚠ Accessible depuis le reseau local")
+	} else {
+		fmt.Printf("-> Dashboard sur http://localhost:%d\n", port)
+	}
 
-	if open {
-		openBrowser(url)
+	if open && bind == "127.0.0.1" {
+		openBrowser(fmt.Sprintf("http://localhost:%d", port))
 	}
 
 	handler := dashboardAuthMiddleware(csrfToken, mux)
@@ -226,6 +243,15 @@ func Start(port int, open bool) error {
 		IdleTimeout:  60 * time.Second,
 	}
 	return server.Serve(listener)
+}
+
+func getLocalIP() string {
+	conn, err := net.Dial("udp4", "192.168.0.1:80")
+	if err == nil {
+		defer conn.Close()
+		return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	}
+	return "0.0.0.0"
 }
 
 func StartAPI(port int, readOnly bool) error {

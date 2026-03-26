@@ -173,6 +173,7 @@
             <button class="active" onclick="showPage('local')">Local</button>
             <button onclick="showPage('remotes')">Remotes</button>
             <button onclick="showPage('pairing')">Pairing</button>
+            <button onclick="showPage('tunnels')">Tunnels</button>
         </div>
     </header>
 
@@ -254,18 +255,16 @@
             <div class="card full">
                 <h2>Pairing</h2>
                 <p style="color: #8b949e; margin-bottom: 16px;">
-                    Connecte deux machines en un seul geste. Cles SSH echangees automatiquement, chiffrement E2E.
+                    Connecte deux machines en un seul geste. Cles SSH echangees, chiffrement E2E, detection reseau auto.
                 </p>
                 <div style="display: flex; gap: 16px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
-                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Attendre un pairing</h4>
-                        <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Dans le terminal :</p>
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Lancer un pairing</h4>
                         <code style="background: #161b22; padding: 8px 12px; border-radius: 6px; display: block; font-size: 14px; color: #3fb950;">hop pair</code>
-                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Essaie d'abord le LAN (3s), puis bascule sur le relay.</p>
+                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Propose le choix du mode (auto, LAN, relay, gist). En auto: LAN + relay en parallele.</p>
                     </div>
                     <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
                         <h4 style="color: #58a6ff; margin-bottom: 12px;">Se connecter</h4>
-                        <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Entre le token de l'autre machine :</p>
                         <div style="display: flex; gap: 8px;">
                             <input type="text" id="pair-code" placeholder="Code ou token" style="flex:1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e1e4e8; font-size: 14px;">
                             <button onclick="doPairing()" style="background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Connecter</button>
@@ -275,13 +274,63 @@
                 </div>
             </div>
             <div class="card full">
-                <h2>3 modes de pairing</h2>
-                <div style="color: #8b949e; font-size: 13px; line-height: 1.8;">
-                    <p><strong style="color:#3fb950;">LAN</strong> — <code>hop pair</code> (defaut si meme reseau). Broadcast UDP, aucun internet requis.</p>
-                    <p><strong style="color:#58a6ff;">Worker relay</strong> — <code>hop pair</code> (fallback auto). Relay chiffre E2E via Cloudflare Worker.</p>
-                    <p><strong style="color:#d2a8ff;">GitHub Gist</strong> — <code>hop pair --gist</code>. Utilise un Gist prive comme relay. Necessite gh CLI.</p>
-                    <p style="margin-top: 12px;"><strong style="color:#e1e4e8;">Self-hosted:</strong> <code>hop server --port 8899</code> lance un relay standalone, puis <code>hop worker url http://mon-serveur:8899</code></p>
-                    <p style="margin-top: 8px; color: #3fb950;">Chiffrement AES-GCM + Argon2id. Le relay ne voit jamais les donnees en clair.</p>
+                <h2>Modes de pairing</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><strong style="color:#3fb950;">Auto</strong> — <code>hop pair</code> ou <code>hop pair -m auto</code>. LAN + relay en parallele, premier qui repond gagne.</p>
+                    <p><strong style="color:#3fb950;">LAN</strong> — <code>hop pair -m lan</code>. Broadcast UDP direct, zero internet.</p>
+                    <p><strong style="color:#58a6ff;">Relay</strong> — <code>hop pair -m relay</code>. Via le worker (chiffre E2E).</p>
+                    <p><strong style="color:#d2a8ff;">Gist</strong> — <code>hop pair -m gist</code>. Via un Gist GitHub prive. Necessite <code>gh</code> CLI.</p>
+                </div>
+            </div>
+            <div class="card full">
+                <h2>Export / Import</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><code>hop export</code> — sauvegarde chiffree (fichier local)</p>
+                    <p><code>hop export --cloud</code> — upload chiffre sur le worker (lien 2min)</p>
+                    <p><code>hop import &lt;fichier-ou-token&gt;</code> — restaure la config</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TUNNELS PAGE -->
+    <div class="container page" id="page-tunnels">
+        <div class="grid">
+            <div class="card full">
+                <h2>Tunnels</h2>
+                <p style="color: #8b949e; margin-bottom: 16px;">
+                    Acces a tes machines depuis n'importe ou. Plusieurs providers, zero config obligatoire.
+                </p>
+                <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Tunnel temporaire</h4>
+                        <code style="background: #161b22; padding: 8px 12px; border-radius: 6px; display: block; font-size: 14px; color: #3fb950;">hop tunnel quick</code>
+                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Propose le choix du provider. Tunnel actif tant que le process tourne.</p>
+                    </div>
+                    <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Tunnel permanent</h4>
+                        <code style="background: #161b22; padding: 8px 12px; border-radius: 6px; display: block; font-size: 14px; color: #3fb950;">hop tunnel setup</code>
+                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Cloudflare Tunnel permanent avec service systemd. Necessite compte CF + domaine.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card full">
+                <h2>Providers disponibles</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><strong style="color:#3fb950;">trycloudflare</strong> — auto-install cloudflared, zero compte CF</p>
+                    <p><strong style="color:#58a6ff;">localhost.run</strong> — zero install, via SSH</p>
+                    <p><strong style="color:#d2a8ff;">bore.pub</strong> — auto-install bore</p>
+                    <p><strong style="color:#f0883e;">Cloudflare</strong> — tunnel permanent, necessite compte CF + domaine</p>
+                    <p><strong style="color:#e1e4e8;">Worker perso</strong> — deploie ton propre relay (<code>hop worker deploy</code>) ou configure une URL (<code>hop worker url</code>)</p>
+                </div>
+            </div>
+            <div class="card full">
+                <h2>Self-hosted relay</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><code>hop server --port 8899</code> — lance un relay de pairing standalone</p>
+                    <p><code>hop worker deploy</code> — deploie le worker sur ton compte Cloudflare</p>
+                    <p><code>hop worker url https://mon-relay.com</code> — configure un relay custom</p>
+                    <p><code>hop worker url default</code> — revenir au worker par defaut</p>
                 </div>
             </div>
         </div>
