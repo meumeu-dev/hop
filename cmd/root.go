@@ -67,9 +67,9 @@ var rootCmd = &cobra.Command{
 
 		// Determine options: flags override config
 		useTmux := tmuxFlag || service.Tmux
-		sessionName := sessionFlag
+		sessionName := sanitizeSession(sessionFlag)
 		if sessionName == "" {
-			sessionName = service.Session
+			sessionName = sanitizeSession(service.Session)
 		}
 		useNoPerm := noPermFlag || service.NoPerm
 
