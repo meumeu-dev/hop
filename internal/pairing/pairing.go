@@ -56,6 +56,7 @@ type PairData struct {
 	HostKey   string `json:"host_key,omitempty"`
 	Tunnel    string `json:"tunnel,omitempty"`
 	CFDomain  string `json:"cf_domain,omitempty"`
+	Version   string `json:"version,omitempty"`
 }
 
 // PairSession holds the state of a pairing session

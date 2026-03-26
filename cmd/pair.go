@@ -73,6 +73,7 @@ func buildPairData() (string, *pairing.PairData) {
 		User:      user,
 		PublicKey: pubKey,
 		HostKey:   hostKey,
+		Version:   version,
 	}
 
 	return code, data
@@ -260,9 +261,20 @@ func runPairServerWorker(code string, data *pairing.PairData) {
 	finalizePairServer(response, code, data)
 }
 
+func checkVersionMismatch(remoteVersion string) {
+	if remoteVersion == "" || version == "dev" {
+		return
+	}
+	if remoteVersion != version && remoteVersion != "v"+version && "v"+remoteVersion != version {
+		fmt.Printf("\n⚠ Version differente: local %s, distant %s\n", version, remoteVersion)
+		fmt.Println("  Mettez les deux machines a jour: hop update -y")
+	}
+}
+
 func finalizePairServer(response *pairing.PairData, code string, data *pairing.PairData) {
 
 	fmt.Println()
+	checkVersionMismatch(response.Version)
 	fmt.Printf("→ Machine distante: %s\n", response.Hostname)
 	if parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.PublicKey)); err == nil {
 		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
@@ -377,6 +389,7 @@ func buildClientResponse() (string, *pairing.PairData) {
 		IP:        localIP,
 		PublicKey: pubKey,
 		User:      user,
+		Version:   version,
 	}
 
 	cfg, _ := config.Load()
@@ -505,6 +518,8 @@ func runPairClientWorker(pairToken string) {
 }
 
 func finalizePairClient(serverData *pairing.PairData) {
+	checkVersionMismatch(serverData.Version)
+
 	if err := pairing.AddAuthorizedKey(serverData.PublicKey); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur ajout clé SSH: %v\n", err)
 		os.Exit(1)
