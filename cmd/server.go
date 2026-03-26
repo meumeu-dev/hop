@@ -83,6 +83,15 @@ const maxBodySize = 1 << 20 // 1MB
 const maxPairs = 1000
 
 var validMachineID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+var validTunnelHostname = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+func isValidTunnelURL(url string) bool {
+	// Must be a valid hostname, no scheme, no path, no port
+	if strings.Contains(url, "/") || strings.Contains(url, ":") || strings.Contains(url, " ") {
+		return false
+	}
+	return validTunnelHostname.MatchString(url)
+}
 
 func (s *relayStore) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -253,6 +262,12 @@ func (s *relayStore) handleTunnelRegister(w http.ResponseWriter, r *http.Request
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" || body.Token == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	// Validate tunnel URL: must be a hostname, no path traversal or private IPs
+	if !isValidTunnelURL(body.URL) {
+		http.Error(w, "Invalid tunnel URL", http.StatusBadRequest)
 		return
 	}
 

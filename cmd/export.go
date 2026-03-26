@@ -48,8 +48,8 @@ var exportCmd = &cobra.Command{
 		fmt.Print("Mot de passe pour chiffrer le backup: ")
 		password, _ := reader.ReadString('\n')
 		password = strings.TrimSpace(password)
-		if len(password) < 4 {
-			fmt.Fprintln(os.Stderr, "Mot de passe trop court (min 4 caracteres)")
+		if len(password) < 8 {
+			fmt.Fprintln(os.Stderr, "Mot de passe trop court (min 8 caracteres)")
 			os.Exit(1)
 		}
 

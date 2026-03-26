@@ -71,7 +71,7 @@ func Install() error {
 	}
 	defer f.Close()
 
-	_, err = io.Copy(f, resp.Body)
+	_, err = io.Copy(f, io.LimitReader(resp.Body, 200<<20)) // 200MB max
 	if err != nil {
 		return fmt.Errorf("erreur écriture: %w", err)
 	}

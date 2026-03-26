@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -118,19 +119,36 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+var validSessionName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// sanitizeSession ensures session name is safe for tmux/shell
+func sanitizeSession(name string) string {
+	if validSessionName.MatchString(name) {
+		return name
+	}
+	// Replace unsafe chars
+	safe := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return '-'
+	}, name)
+	return safe
+}
+
 // askSession prompts for a session name if not provided
 func askSession(sessionName string, serviceName string) string {
 	if sessionName != "" {
-		return sessionName
+		return sanitizeSession(sessionName)
 	}
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Printf("Nom de session tmux [%s]: ", serviceName)
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 	if input == "" {
-		return serviceName
+		return sanitizeSession(serviceName)
 	}
-	return input
+	return sanitizeSession(input)
 }
 
 // isClaudeCmd detects if the command is a Claude CLI command

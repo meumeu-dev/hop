@@ -536,7 +536,11 @@ func finalizePairClient(serverData *pairing.PairData) {
 		os.Exit(1)
 	}
 
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		fmt.Fprintf(os.Stderr, "Erreur chargement config: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Add machine to config — find best reachable IP
 	bestIP := serverData.IP
@@ -725,9 +729,28 @@ func detectAllIPs() []string {
 	return ips
 }
 
-// findReachableIP tests all IPs and returns the first one reachable on SSH port
+// isPrivateIP checks if an IP is in a private/LAN range
+func isPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	privateRanges := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// findReachableIP tests all private IPs and returns the first one reachable on SSH port
 func findReachableIP(ips []string) string {
 	for _, ip := range ips {
+		if !isPrivateIP(ip) {
+			continue
+		}
 		conn, err := net.DialTimeout("tcp", ip+":22", 500*time.Millisecond)
 		if err == nil {
 			conn.Close()

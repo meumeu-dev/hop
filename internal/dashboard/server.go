@@ -11,8 +11,9 @@ import (
 	"io"
 	"io/fs"
 	"net"
-	"os"
 	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -77,6 +78,15 @@ type remoteReq struct {
 	Key  string `json:"key"`
 }
 
+func isLocalhostOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -137,11 +147,15 @@ func dashboardAuthMiddleware(token string, next http.Handler) http.Handler {
 		if r.URL.Path == "/api/csrf" {
 			origin := r.Header.Get("Origin")
 			referer := r.Header.Get("Referer")
-			if origin != "" && !strings.HasPrefix(origin, "http://localhost") && !strings.HasPrefix(origin, "http://127.0.0.1") {
+			if origin == "" && referer == "" {
 				jsonError(w, "forbidden", 403)
 				return
 			}
-			if origin == "" && referer != "" && !strings.HasPrefix(referer, "http://localhost") && !strings.HasPrefix(referer, "http://127.0.0.1") {
+			if origin != "" && !isLocalhostOrigin(origin) {
+				jsonError(w, "forbidden", 403)
+				return
+			}
+			if origin == "" && referer != "" && !isLocalhostOrigin(referer) {
 				jsonError(w, "forbidden", 403)
 				return
 			}

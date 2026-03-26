@@ -130,14 +130,17 @@ var updateCmd = &cobra.Command{
 			os.Remove(tmpPath)
 			if os.IsPermission(err) {
 				fmt.Println("→ Installation (sudo)...")
-				mvCmd := exec.Command("sudo", "bash", "-c", fmt.Sprintf("mv %s %s.old 2>/dev/null; mv %s %s", execPath, execPath, tmpPath, execPath))
+				exec.Command("sudo", "mv", execPath, oldPath).Run()
+				mvCmd := exec.Command("sudo", "mv", tmpPath, execPath)
 				mvCmd.Stdin = os.Stdin
 				mvCmd.Stdout = os.Stdout
 				mvCmd.Stderr = os.Stderr
 				if err := mvCmd.Run(); err != nil {
+					exec.Command("sudo", "mv", oldPath, execPath).Run()
 					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 					os.Exit(1)
 				}
+				exec.Command("sudo", "rm", "-f", oldPath).Run()
 				fmt.Printf("→ hop mis a jour en %s\n", latest)
 				return
 			}
@@ -178,7 +181,7 @@ func fetchLatestRelease() (string, string, error) {
 		TagName string `json:"tag_name"`
 		Body    string `json:"body"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
 		return "", "", err
 	}
 	return strings.TrimSpace(release.TagName), release.Body, nil
@@ -244,7 +247,7 @@ func CheckUpdateBackground() {
 	var release struct {
 		TagName string `json:"tag_name"`
 	}
-	json.NewDecoder(resp.Body).Decode(&release)
+	json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&release)
 	latest := strings.TrimSpace(release.TagName)
 
 	if latest != "" && latest != version && latest != "v"+version {
