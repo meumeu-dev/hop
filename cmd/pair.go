@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/meumeu-dev/hop/internal/pairing"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 )
 
 var pairCmd = &cobra.Command{
@@ -53,11 +56,19 @@ func runPairServer() {
 
 	code := pairing.GenerateCode()
 
+	// Read host key for SSH pinning
+	hostKey := ""
+	hostKeyData, err := os.ReadFile("/etc/ssh/ssh_host_ed25519_key.pub")
+	if err == nil {
+		hostKey = strings.TrimSpace(string(hostKeyData))
+	}
+
 	data := &pairing.PairData{
 		Hostname:  hostname,
 		IP:        localIP,
 		User:      user,
 		PublicKey: pubKey,
+		HostKey:   hostKey,
 	}
 
 	fmt.Println("→ Enregistrement sur le serveur de pairing...")
@@ -68,25 +79,40 @@ func runPairServer() {
 	}
 	defer pairing.Cleanup(session)
 
-	// Pair token = pairID.code.token (all needed by the client)
 	pairToken := session.PairID + "." + code + "." + session.Token
 
+	// Try to copy to clipboard
+	if err := copyToClipboard(pairToken); err == nil {
+		fmt.Println()
+		fmt.Println("→ Token copié dans le presse-papier !")
+		fmt.Println("  Sur l'autre PC: hop pair <coller>")
+	} else {
+		fmt.Println()
+		fmt.Println("Token (copie-le sur l'autre PC):")
+		fmt.Println(pairToken)
+	}
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════╗")
-	fmt.Println("║  Sur l'autre PC, tape:                ║")
-	fmt.Println("║                                       ║")
-	fmt.Printf("║  hop pair %s...  ║\n", pairToken[:25])
-	fmt.Println("╚══════════════════════════════════════╝")
-	fmt.Println()
-	fmt.Println("Token complet:")
-	fmt.Println(pairToken)
-	fmt.Println()
-	fmt.Println("En attente de connexion... (expire dans 5 min)")
+	fmt.Println("En attente de connexion... (expire dans 2 min)")
 
-	response, err := pairing.WaitForResponse(session, 5*time.Minute)
+	response, err := pairing.WaitForResponse(session, 2*time.Minute)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
 		os.Exit(1)
+	}
+
+	fmt.Println()
+	fmt.Printf("→ Machine distante: %s\n", response.Hostname)
+	if parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.PublicKey)); err == nil {
+		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("\nAccepter ce pairing ? [o/N]: ")
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+		fmt.Println("Pairing annulé.")
+		os.Exit(0)
 	}
 
 	if err := pairing.AddAuthorizedKey(response.PublicKey); err != nil {
@@ -94,7 +120,6 @@ func runPairServer() {
 		os.Exit(1)
 	}
 
-	fmt.Println()
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", response.Hostname)
 	fmt.Println("→ Clé SSH ajoutée")
 
@@ -144,6 +169,18 @@ func runPairClient(pairToken string) {
 	}
 
 	fmt.Printf("→ Machine trouvée: %s (%s@%s)\n", serverData.Hostname, serverData.User, serverData.IP)
+	if parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(serverData.PublicKey)); err == nil {
+		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("\nAccepter ce pairing ? [o/N]: ")
+	confirm, _ := reader.ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+		fmt.Println("Pairing annulé.")
+		os.Exit(0)
+	}
 
 	cfg, _ := config.Load()
 
@@ -212,12 +249,27 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 	target := server.User + "@" + server.IP
 	hopKeyPath := config.HopDir() + "/keys/hop_ed25519"
 
-	// Transfer CF env file via SSH using stdin (no shell injection)
 	envContent := pairing.BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain)
 
 	fmt.Printf("  → Envoi vers %s...\n", target)
-	sshCmd := exec.Command("ssh", "-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new", target, "--",
+
+	sshArgs := []string{"-i", hopKeyPath}
+
+	// Pin host key if available from pairing
+	if server.HostKey != "" {
+		knownHostsPath := config.HopDir() + "/known_hosts_tmp"
+		knownEntry := fmt.Sprintf("%s %s\n", server.IP, server.HostKey)
+		os.WriteFile(knownHostsPath, []byte(knownEntry), 0600)
+		defer os.Remove(knownHostsPath)
+		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+knownHostsPath)
+	} else {
+		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=accept-new")
+	}
+
+	sshArgs = append(sshArgs, target, "--",
 		"bash", "-c", "mkdir -p ~/.hop && cat > ~/.hop/cloudflare.env && chmod 600 ~/.hop/cloudflare.env")
+
+	sshCmd := exec.Command("ssh", sshArgs...)
 	sshCmd.Stdin = strings.NewReader(envContent)
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
@@ -235,6 +287,20 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 	fmt.Println()
 	fmt.Printf("  → Pour finaliser, lance sur %s:\n", server.Hostname)
 	fmt.Printf("    hop tunnel setup %s\n", server.Hostname)
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "linux":
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	default:
+		return fmt.Errorf("unsupported")
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
 
 func detectLocalIP() string {

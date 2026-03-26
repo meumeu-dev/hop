@@ -44,7 +44,7 @@ export default {
         tokenHash: tokenHash,
         created: Date.now(),
         responsePosted: false,
-      }), { expirationTtl: 300 });
+      }), { expirationTtl: 120 });
 
       return jsonResponse({ ok: true, pair_id: pairId, token: token, expires_in: 300 }, 200, corsHeaders);
     }
@@ -124,14 +124,14 @@ export default {
 
       // Mark as responded
       parsed.responsePosted = true;
-      await env.HOP_KV.put(key, JSON.stringify(parsed), { expirationTtl: 300 });
+      await env.HOP_KV.put(key, JSON.stringify(parsed), { expirationTtl: 120 });
 
       // Store response
       const responseKey = `${key}:response`;
       await env.HOP_KV.put(responseKey, JSON.stringify({
         data: body.data,
         created: Date.now(),
-      }), { expirationTtl: 300 });
+      }), { expirationTtl: 120 });
 
       return jsonResponse({ ok: true }, 200, corsHeaders);
     }

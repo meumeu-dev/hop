@@ -130,8 +130,18 @@ func dashboardAuthMiddleware(token string, next http.Handler) http.Handler {
 			}
 		}
 
-		// Inject CSRF token endpoint
+		// CSRF token endpoint — only allow from localhost origins
 		if r.URL.Path == "/api/csrf" {
+			origin := r.Header.Get("Origin")
+			referer := r.Header.Get("Referer")
+			if origin != "" && !strings.HasPrefix(origin, "http://localhost") && !strings.HasPrefix(origin, "http://127.0.0.1") {
+				jsonError(w, "forbidden", 403)
+				return
+			}
+			if origin == "" && referer != "" && !strings.HasPrefix(referer, "http://localhost") && !strings.HasPrefix(referer, "http://127.0.0.1") {
+				jsonError(w, "forbidden", 403)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"token": token})
 			return

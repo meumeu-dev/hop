@@ -5,7 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/meumeu-dev/hop/internal/config"
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -32,9 +32,9 @@ type PairData struct {
 	IP        string `json:"ip,omitempty"`
 	User      string `json:"user"`
 	PublicKey string `json:"public_key"`
+	HostKey   string `json:"host_key,omitempty"`
 	Tunnel    string `json:"tunnel,omitempty"`
-	// CF domain only (not the API key — that goes via SSH after pairing)
-	CFDomain string `json:"cf_domain,omitempty"`
+	CFDomain  string `json:"cf_domain,omitempty"`
 }
 
 // PairSession holds the state of a pairing session
@@ -50,19 +50,20 @@ func GenerateCode() string {
 	return fmt.Sprintf("%06d", n.Int64()+100000)
 }
 
-// deriveKey derives a 32-byte AES key from the code using PBKDF2-like stretching
-func deriveKey(code string) []byte {
-	// Multiple rounds of SHA-256 to slow brute-force
-	hash := sha256.Sum256([]byte("hop-pair-v2-" + code))
-	for i := 0; i < 100000; i++ {
-		hash = sha256.Sum256(hash[:])
-	}
-	return hash[:]
+// deriveKey derives a 32-byte AES key from the code using Argon2id
+// 3 iterations, 64MB memory, 1 thread — makes GPU brute-force impractical
+func deriveKey(code string, salt []byte) []byte {
+	return argon2.IDKey([]byte(code), salt, 3, 64*1024, 1, 32)
 }
 
 // Encrypt encrypts data with AES-GCM using the pairing code as key
+// Output format: salt (16 bytes) || nonce || ciphertext
 func Encrypt(data []byte, code string) (string, error) {
-	key := deriveKey(code)
+	salt := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return "", err
+	}
+	key := deriveKey(code, salt)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -79,16 +80,24 @@ func Encrypt(data []byte, code string) (string, error) {
 	}
 
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
+	// Prepend salt
+	result := append(salt, ciphertext...)
+	return base64.StdEncoding.EncodeToString(result), nil
 }
 
 // Decrypt decrypts data with AES-GCM using the pairing code as key
 func Decrypt(encoded string, code string) ([]byte, error) {
-	key := deriveKey(code)
-	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
+	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
 		return nil, err
 	}
+	if len(raw) < 16 {
+		return nil, fmt.Errorf("data too short")
+	}
+
+	salt := raw[:16]
+	encData := raw[16:]
+	key := deriveKey(code, salt)
 
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -101,11 +110,11 @@ func Decrypt(encoded string, code string) ([]byte, error) {
 	}
 
 	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	if len(encData) < nonceSize {
 		return nil, fmt.Errorf("ciphertext too short")
 	}
 
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	nonce, ciphertext := encData[:nonceSize], encData[nonceSize:]
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
