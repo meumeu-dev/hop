@@ -105,27 +105,21 @@ echo "=== Installation des outils ==="
 # hop
 if ! command -v hop &>/dev/null; then
     echo "Installation de hop..."
-    REPO="meumeu-dev/hop"
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64)  BINARY="hop-linux-amd64" ;;
-        aarch64) BINARY="hop-linux-arm64" ;;
-        armv7l)  BINARY="hop-linux-arm32" ;;
-        *)       echo "Architecture non supportee: $ARCH"; exit 1 ;;
-    esac
-    TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-    [ -z "$TOKEN" ] && command -v gh &>/dev/null && TOKEN=$(gh auth token 2>/dev/null || true)
-    if [ -n "$TOKEN" ]; then
-        LATEST=$(curl -sSf -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/releases/latest" | grep -o '"tag_name":"[^"]*"' | cut -d'"' -f4)
-        ASSET_URL=$(curl -sSf -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/$REPO/releases/tags/$LATEST" | \
-            grep -B3 "\"name\":\"$BINARY\"" | grep "browser_download_url" | cut -d'"' -f4)
-        curl -sSfL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" -o /tmp/hop "$ASSET_URL"
+    if command -v gh &>/dev/null; then
+        REPO="meumeu-dev/hop"
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64)  BINARY="hop-linux-amd64" ;;
+            aarch64) BINARY="hop-linux-arm64" ;;
+            armv7l)  BINARY="hop-linux-arm32" ;;
+            *)       echo "Architecture non supportee: $ARCH"; exit 1 ;;
+        esac
+        LATEST=$(gh api "repos/$REPO/releases/latest" --jq '.tag_name')
+        gh release download "$LATEST" --repo "$REPO" --pattern "$BINARY" --output /tmp/hop --clobber
         chmod +x /tmp/hop && sudo mv /tmp/hop /usr/local/bin/hop
         echo "hop $LATEST installe"
     else
-        echo "Token GitHub requis: export GITHUB_TOKEN=ghp_xxx ou gh auth login"
+        echo "gh CLI requis: sudo apt install gh && gh auth login"
     fi
 fi
 
