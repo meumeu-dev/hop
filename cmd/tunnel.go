@@ -215,7 +215,8 @@ var tunnelQuickCmd = &cobra.Command{
 	Use:   "quick",
 	Short: "Lance un tunnel temporaire (zero config, plusieurs providers)",
 	Run: func(cmd *cobra.Command, args []string) {
-		for {
+		maxRetries := 3
+		for retry := 0; retry < maxRetries; retry++ {
 			if tunnelProvider == "" {
 				tunnelProvider = askTunnelProvider()
 			}
@@ -240,7 +241,12 @@ var tunnelQuickCmd = &cobra.Command{
 			}
 
 			fmt.Fprintf(os.Stderr, "\n→ Tunnel echoue: %v\n\n", err)
-			fmt.Println("Essayer un autre provider ?")
+			if retry < maxRetries-1 {
+				fmt.Println("Essayer un autre provider ?")
+			} else {
+				fmt.Fprintln(os.Stderr, "Nombre maximum de tentatives atteint.")
+				os.Exit(1)
+			}
 			tunnelProvider = "" // reset to show menu again
 		}
 	},
@@ -392,21 +398,44 @@ func findOrInstallBore() string {
 		arch = "armv7"
 	}
 
-	url := fmt.Sprintf("https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.2-%s-unknown-linux-musl.tar.gz", arch)
-	fmt.Printf("→ Telechargement depuis %s...\n", url)
+	// Get latest version
+	verOut, err := exec.Command("curl", "-sSf", "https://api.github.com/repos/ekzhang/bore/releases/latest").Output()
+	boreVersion := "v0.6.0"
+	if err == nil {
+		for _, line := range strings.Split(string(verOut), "\n") {
+			if strings.Contains(line, "tag_name") {
+				parts := strings.Split(line, "\"")
+				for i, p := range parts {
+					if p == "tag_name" && i+2 < len(parts) {
+						boreVersion = parts[i+2]
+						break
+					}
+				}
+			}
+		}
+	}
 
-	// Download and extract
+	url := fmt.Sprintf("https://github.com/ekzhang/bore/releases/download/%s/bore-%s-%s-unknown-linux-musl.tar.gz", boreVersion, boreVersion, arch)
+	fmt.Printf("→ Telechargement bore %s...\n", boreVersion)
+
 	tmpFile := "/tmp/bore.tar.gz"
-	dlCmd := exec.Command("curl", "-sSL", "-o", tmpFile, url)
+	dlCmd := exec.Command("curl", "-sSfL", "-o", tmpFile, url)
 	if err := dlCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur telechargement bore: %v\n", err)
 		return ""
 	}
 
-	extractCmd := exec.Command("tar", "-xzf", tmpFile, "-C", binDir, "bore")
+	// Extract — bore binary may be at root or in a subdirectory
+	extractCmd := exec.Command("tar", "-xzf", tmpFile, "-C", "/tmp")
 	if err := extractCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur extraction bore: %v\n", err)
 		return ""
+	}
+	// Find the bore binary
+	exec.Command("bash", "-c", fmt.Sprintf("find /tmp -name 'bore' -type f -executable 2>/dev/null | head -1 | xargs -I{} mv {} %s", borePath)).Run()
+	if _, err := os.Stat(borePath); err != nil {
+		// Try direct move
+		exec.Command("mv", "/tmp/bore", borePath).Run()
 	}
 	os.Remove(tmpFile)
 	os.Chmod(borePath, 0755)
