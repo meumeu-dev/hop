@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var resetYes bool
+
 var resetCmd = &cobra.Command{
 	Use:   "reset",
 	Short: "Remet la config a zero (garde le binaire)",
@@ -21,18 +23,20 @@ var resetCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("Ceci va supprimer toute la config dans %s\n", hopDir)
-		fmt.Println("(machines, services, cles SSH, secrets)")
-		fmt.Println()
+		if !resetYes {
+			fmt.Printf("Ceci va supprimer toute la config dans %s\n", hopDir)
+			fmt.Println("(machines, services, cles SSH, secrets)")
+			fmt.Println()
 
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Confirmer le reset ? [oui/N]: ")
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("Confirmer le reset ? [oui/N]: ")
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(strings.ToLower(confirm))
 
-		if confirm != "oui" && confirm != "yes" {
-			fmt.Println("Annule.")
-			return
+			if confirm != "oui" && confirm != "yes" {
+				fmt.Println("Annule.")
+				return
+			}
 		}
 
 		if err := os.RemoveAll(hopDir); err != nil {
@@ -52,5 +56,6 @@ var resetCmd = &cobra.Command{
 }
 
 func init() {
+	resetCmd.Flags().BoolVarP(&resetYes, "yes", "y", false, "Skip la confirmation")
 	rootCmd.AddCommand(resetCmd)
 }
