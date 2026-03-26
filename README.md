@@ -161,14 +161,7 @@ CF_API_KEY=ton-token-ici
 CF_ACCOUNT_ID=ton-account-id
 ```
 
-### 6. Creer un tunnel
-
-```bash
-hop tunnel setup mon-pc
-# -> Suit les instructions (auth Cloudflare + DNS automatique)
-```
-
-Chaque machine aura un hostname type `mon-pc.mondomaine.dev`. Hop bascule automatiquement entre LAN et tunnel selon la disponibilite.
+Hop gere ensuite automatiquement la creation des tunnels, le DNS et l'installation de cloudflared. Chaque machine aura un hostname type `mon-pc.mondomaine.dev` et hop bascule entre LAN et tunnel selon la disponibilite.
 
 ## Config
 
