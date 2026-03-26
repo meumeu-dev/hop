@@ -6,23 +6,19 @@ func TestGenerateCode(t *testing.T) {
 	seen := make(map[string]bool)
 	for i := 0; i < 100; i++ {
 		code := GenerateCode()
-		if len(code) != 6 {
-			t.Errorf("GenerateCode() len = %d, want 6", len(code))
+		if len(code) != 8 {
+			t.Errorf("GenerateCode() len = %d, want 8", len(code))
 		}
-		// Must be numeric
+		// Must be lowercase alphanumeric
 		for _, c := range code {
-			if c < '0' || c > '9' {
-				t.Errorf("GenerateCode() contains non-digit: %q", code)
+			if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				t.Errorf("GenerateCode() contains invalid char: %q", code)
 			}
-		}
-		// Must be >= 100000
-		if code[0] == '0' {
-			t.Errorf("GenerateCode() starts with 0: %q", code)
 		}
 		seen[code] = true
 	}
-	// With 100 draws from 900k, we should have many unique codes
-	if len(seen) < 90 {
+	// With 100 draws from 36^8, all should be unique
+	if len(seen) < 99 {
 		t.Errorf("GenerateCode() poor randomness: only %d unique codes in 100 draws", len(seen))
 	}
 }

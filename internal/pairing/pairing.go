@@ -64,13 +64,19 @@ type PairData struct {
 type PairSession struct {
 	PairID string // UUID returned by worker (lookup key)
 	Token  string // Bearer token for auth
-	Code   string // 6-digit code (encryption key only, never sent to worker)
+	Code   string // pairing code (encryption key only, never sent to worker)
 }
 
-// GenerateCode creates a 6-digit pairing code
+// GenerateCode creates an 8-character alphanumeric pairing code
+// 36^8 = ~2.8 trillion combinations (vs 900k for 6 digits)
 func GenerateCode() string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(900000))
-	return fmt.Sprintf("%06d", n.Int64()+100000)
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	code := make([]byte, 8)
+	for i := range code {
+		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		code[i] = charset[n.Int64()]
+	}
+	return string(code)
 }
 
 // deriveKey derives a 32-byte AES key from the code using Argon2id

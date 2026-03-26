@@ -364,8 +364,9 @@ func runPairClient(pairToken string) {
 		return
 	}
 
-	// Check if it's a 6-digit code (LAN mode)
-	if len(pairToken) == 6 && isDigits(pairToken) {
+	// Check if it's a short code without dots (LAN mode)
+	// LAN code: 8 alphanumeric chars, no dots or colons
+	if len(pairToken) == 8 && !strings.Contains(pairToken, ".") && !strings.Contains(pairToken, ":") && isAlphanumeric(pairToken) {
 		runPairClientLAN(pairToken)
 		return
 	}
@@ -374,9 +375,9 @@ func runPairClient(pairToken string) {
 	runPairClientWorker(pairToken)
 }
 
-func isDigits(s string) bool {
+func isAlphanumeric(s string) bool {
 	for _, c := range s {
-		if c < '0' || c > '9' {
+		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
 			return false
 		}
 	}
