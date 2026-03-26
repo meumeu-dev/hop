@@ -267,7 +267,8 @@ func checkVersionMismatch(remoteVersion string) {
 	}
 	if remoteVersion != version && remoteVersion != "v"+version && "v"+remoteVersion != version {
 		fmt.Printf("\n⚠ Version differente: local %s, distant %s\n", version, remoteVersion)
-		fmt.Println("  Mettez les deux machines a jour: hop update -y")
+		fmt.Println("  Mettez les deux machines a jour: hop update")
+		fmt.Println("  (seul le binaire est mis a jour, la config et les services sont preserves)")
 	}
 }
 
