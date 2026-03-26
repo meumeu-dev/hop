@@ -1,24 +1,25 @@
 # hop
 
+> **Beta** — en cours de dev, ca peut bouger. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
+
 Lanceur de commandes, SSH et config perso. Un seul binaire pour gerer toutes tes machines.
 
 ## Installation
 
 ```bash
-# One-liner (necessite gh CLI authentifie)
-bash <(gh api repos/meumeu-dev/hop/contents/install.sh --jq '.content' | base64 -d)
-
-# Ou avec token explicite
-GITHUB_TOKEN=ghp_xxx bash install.sh
-
-# Ou build depuis les sources
-go build -ldflags "-X main.Version=v1.0.0" -o hop .
+curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
 ```
 
 ### Mise a jour
 
 ```bash
 hop update
+```
+
+### Build depuis les sources
+
+```bash
+go build -ldflags "-X main.Version=v1.1.0" -o hop .
 ```
 
 ## Demarrage rapide
@@ -58,6 +59,7 @@ hop code pc1
 | `hop api` | Active l'API REST |
 | `hop remote add <nom> <url>` | Ajoute un hop distant |
 | `hop version` | Affiche la version |
+| `hop update` | Met a jour hop |
 | `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
 
 ## Fonctionnalites
@@ -106,21 +108,71 @@ source <(hop completion bash)
 source <(hop completion zsh)
 ```
 
+## Prerequis pour les tunnels
+
+Les tunnels Cloudflare permettent d'acceder a tes machines depuis n'importe ou, sans ouvrir de port. C'est optionnel — hop marche en LAN sans Cloudflare.
+
+### 1. Creer un compte Cloudflare
+
+Inscris-toi sur [dash.cloudflare.com](https://dash.cloudflare.com). C'est gratuit.
+
+### 2. Ajouter un domaine
+
+- Va dans **Websites** > **Add a site**
+- Entre ton domaine (ex: `mondomaine.dev`)
+- Choisis le plan **Free**
+- Cloudflare te donne 2 nameservers (ex: `anna.ns.cloudflare.com`)
+- Va chez ton registrar (OVH, Gandi, Namecheap...) et remplace les NS par ceux de Cloudflare
+- Attends la propagation (quelques minutes a 24h)
+
+### 3. Recuperer le token API
+
+- Va dans [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens)
+- Clique **Create Token**
+- Utilise le template **Edit zone DNS** :
+  - Permissions : `Zone > DNS > Edit`
+  - Zone Resources : `Include > Specific zone > ton domaine`
+- Clique **Continue to summary** > **Create Token**
+- Copie le token (il ne sera plus affiche)
+
+### 4. Recuperer le Account ID
+
+- Va sur ta zone (clique sur ton domaine dans le dashboard)
+- L'**Account ID** est dans la colonne de droite, section **API**
+- Copie-le
+
+### 5. Configurer hop
+
+```bash
+hop init
+# -> Entre ton domaine quand demande
+
+# Ou via le dashboard
+hop dashboard
+# -> Onglet Cloudflare, entre domaine + email + token API
+```
+
+Cree un fichier `~/.hop/cloudflare.env` :
+
+```
+CF_USER=ton@email.com
+CF_DOMAIN=mondomaine.dev
+CF_API_KEY=ton-token-ici
+CF_ACCOUNT_ID=ton-account-id
+```
+
+### 6. Creer un tunnel
+
+```bash
+hop tunnel setup mon-pc
+# -> Suit les instructions (auth Cloudflare + DNS automatique)
+```
+
+Chaque machine aura un hostname type `mon-pc.mondomaine.dev`. Hop bascule automatiquement entre LAN et tunnel selon la disponibilite.
+
 ## Config
 
 La config est dans `~/.hop/config.yml`. Les secrets (cles API) sont dans `~/.hop/secrets.yml` (gitignore).
-
-## Build
-
-```bash
-go build -o hop .
-
-# Avec version
-go build -ldflags "-X main.Version=v1.1.0" -o hop .
-
-# Tests
-go test ./...
-```
 
 ## License
 

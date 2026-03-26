@@ -1,22 +1,12 @@
 #!/bin/bash
-# Install hop from GitHub releases (private repo)
+# Install hop — https://github.com/meumeu-dev/hop
 #
-# Usage (gh CLI requis):
-#   bash <(gh api repos/meumeu-dev/hop/contents/install.sh --jq '.content' | base64 -d)
-#
-# Ou si le script est deja sur la machine:
-#   bash install.sh
+# Usage:
+#   curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
 set -euo pipefail
 
 REPO="meumeu-dev/hop"
 INSTALL_DIR="/usr/local/bin"
-
-# Require gh CLI
-if ! command -v gh &>/dev/null; then
-    echo "Erreur: gh CLI requis (https://cli.github.com/)"
-    echo "  sudo apt install gh && gh auth login"
-    exit 1
-fi
 
 # Detect arch
 ARCH=$(uname -m)
@@ -28,7 +18,7 @@ case "$ARCH" in
 esac
 
 echo "→ Detection de la derniere version..."
-LATEST=$(gh api "repos/$REPO/releases/latest" --jq '.tag_name')
+LATEST=$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
 
 if [ -z "$LATEST" ]; then
     echo "Erreur: impossible de trouver la derniere release"
@@ -39,7 +29,7 @@ echo "→ Version: $LATEST"
 echo "→ Telechargement $BINARY..."
 
 TMP=$(mktemp)
-gh release download "$LATEST" --repo "$REPO" --pattern "$BINARY" --output "$TMP" --clobber
+curl -sSfL "https://github.com/$REPO/releases/download/$LATEST/$BINARY" -o "$TMP"
 chmod +x "$TMP"
 
 # Install
