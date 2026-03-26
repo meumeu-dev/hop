@@ -39,7 +39,6 @@ hop ssh rpi
 | `hop export [--cloud]` | Backup config chiffre |
 | `hop import <source>` | Restaure config |
 | `hop worker url [url]` | Configure worker custom |
-| `hop server` | Relay self-hosted |
 | `hop update [-y]` | Mise a jour + checksum SHA256 |
 | `hop reset/uninstall` | Cleanup |
 | `hop completion` | Autocompletion |
