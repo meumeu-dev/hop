@@ -26,6 +26,9 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
+// DashboardVersion is set from cmd package
+var DashboardVersion = "dev"
+
 var configMu sync.Mutex
 
 // SafeClient: no redirects, timeout, blocks private IPs at dial time (anti DNS rebinding)
@@ -282,7 +285,7 @@ func remoteGet(remote config.Remote, path string) (*http.Response, error) {
 
 func handlePing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","version":"0.2.0"}`)
+	fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, DashboardVersion)
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {

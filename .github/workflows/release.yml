@@ -37,7 +37,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           GOARM: ${{ matrix.goarm }}
-        run: go build -o ${{ matrix.name }} .
+        run: go build -ldflags "-X main.Version=${GITHUB_REF_NAME}" -o ${{ matrix.name }} .
 
       - uses: actions/upload-artifact@v4
         with:

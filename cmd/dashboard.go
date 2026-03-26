@@ -15,6 +15,7 @@ var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Lance le dashboard web",
 	Run: func(cmd *cobra.Command, args []string) {
+		dashboard.DashboardVersion = version
 		fmt.Println("→ Démarrage du dashboard...")
 		if err := dashboard.Start(dashPort, !dashNoOpen); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)

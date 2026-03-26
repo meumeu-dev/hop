@@ -36,6 +36,7 @@ var apiCmd = &cobra.Command{
 			return
 		}
 
+		dashboard.DashboardVersion = version
 		if err := dashboard.StartAPI(apiPort, apiReadOnly); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			os.Exit(1)
