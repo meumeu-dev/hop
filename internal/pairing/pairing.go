@@ -31,6 +31,10 @@ type PairData struct {
 	User      string `json:"user"`
 	PublicKey string `json:"public_key"`
 	Tunnel    string `json:"tunnel,omitempty"`
+	// Cloudflare config (sent from main PC to new machine)
+	CFDomain  string `json:"cf_domain,omitempty"`
+	CFEmail   string `json:"cf_email,omitempty"`
+	CFAPIKey  string `json:"cf_api_key,omitempty"`
 }
 
 // GenerateCode creates a 6-digit pairing code
@@ -284,4 +288,58 @@ func AddAuthorizedKey(pubKey string) error {
 
 	_, err = f.WriteString(pubKey + "\n")
 	return err
+}
+
+// ApplyCFConfig saves the Cloudflare config received from pairing
+func ApplyCFConfig(cfDomain, cfEmail, cfAPIKey string) error {
+	if cfDomain == "" {
+		return nil
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Write env file
+	envPath := filepath.Join(config.HopDir(), "cloudflare.env")
+	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", cfEmail, cfDomain, cfAPIKey)
+	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+		return err
+	}
+
+	cfg.Cloudflare = config.CloudflareConfig{
+		Domain:  cfDomain,
+		EnvFile: "~/.hop/cloudflare.env",
+	}
+
+	return cfg.Save()
+}
+
+// LoadCFCredentials reads the CF credentials from the env file
+func LoadCFCredentials() (email, apiKey string) {
+	cfg, err := config.Load()
+	if err != nil || cfg.Cloudflare.EnvFile == "" {
+		return "", ""
+	}
+
+	path := config.ExpandPath(cfg.Cloudflare.EnvFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(strings.TrimSpace(line), "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		switch parts[0] {
+		case "CF_USER":
+			email = parts[1]
+		case "CF_API_KEY":
+			apiKey = parts[1]
+		}
+	}
+	return
 }
