@@ -18,13 +18,29 @@ import (
 
 var pairMode string
 
-// isInteractive returns true if stdin is a terminal
-func isInteractive() bool {
-	fi, err := os.Stdin.Stat()
+// readConfirm reads a yes/no from stdin. Returns true if confirmed or stdin is closed.
+func readConfirm(prompt string) bool {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
 	if err != nil {
-		return false
+		// stdin closed (pipe, /dev/null, background) — auto-accept
+		fmt.Println("\n→ Auto-accepte (non-interactif)")
+		return true
 	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	input = strings.TrimSpace(strings.ToLower(input))
+	return input == "o" || input == "oui" || input == "y" || input == "yes"
+}
+
+// readLine reads a line from stdin, returns empty string if stdin is closed
+func readLine(prompt string) string {
+	fmt.Print(prompt)
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(input)
 }
 
 var pairCmd = &cobra.Command{
@@ -94,27 +110,20 @@ func runPairServer() {
 
 	// Ask mode if not specified via flag
 	if pairMode == "" || pairMode == "auto" {
-		if isInteractive() {
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Println("Mode de pairing:")
-			fmt.Println("  1) Auto (LAN + relay en parallele)")
-			fmt.Println("  2) LAN uniquement")
-			fmt.Println("  3) Relay uniquement")
-			fmt.Print("Choix [1]: ")
-			choice, _ := reader.ReadString('\n')
-			choice = strings.TrimSpace(choice)
-			switch choice {
-			case "2", "lan":
-				pairMode = "lan"
-			case "3", "relay":
-				pairMode = "relay"
-			default:
-				pairMode = "auto"
-			}
-			fmt.Println()
-		} else {
+		fmt.Println("Mode de pairing:")
+		fmt.Println("  1) Auto (LAN + relay en parallele)")
+		fmt.Println("  2) LAN uniquement")
+		fmt.Println("  3) Relay uniquement")
+		choice := readLine("Choix [1]: ")
+		switch choice {
+		case "2", "lan":
+			pairMode = "lan"
+		case "3", "relay":
+			pairMode = "relay"
+		default:
 			pairMode = "auto"
 		}
+		fmt.Println()
 	}
 
 	switch pairMode {
@@ -256,17 +265,9 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
 	}
 
-	if isInteractive() {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("\nAccepter ce pairing ? [o/N]: ")
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
-		if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
-			fmt.Println("Pairing annulé.")
-			os.Exit(0)
-		}
-	} else {
-		fmt.Println("\n→ Auto-accepte (non-interactif)")
+	if !readConfirm("\nAccepter ce pairing ? [o/N]: ") {
+		fmt.Println("Pairing annulé.")
+		os.Exit(0)
 	}
 
 	if err := pairing.AddAuthorizedKey(response.PublicKey); err != nil {
@@ -429,17 +430,9 @@ func runPairClientWorker(pairToken string) {
 		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
 	}
 
-	if isInteractive() {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("\nAccepter ce pairing ? [o/N]: ")
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
-		if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
-			fmt.Println("Pairing annulé.")
-			os.Exit(0)
-		}
-	} else {
-		fmt.Println("\n→ Auto-accepte (non-interactif)")
+	if !readConfirm("\nAccepter ce pairing ? [o/N]: ") {
+		fmt.Println("Pairing annulé.")
+		os.Exit(0)
 	}
 
 	_, response := buildClientResponse()
@@ -574,13 +567,7 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 }
 
 func askAlias(hostname string) string {
-	if !isInteractive() {
-		return ""
-	}
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("\nAlias pour '%s' (entree pour skip): ", hostname)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
+	input := readLine(fmt.Sprintf("\nAlias pour '%s' (entree pour skip): ", hostname))
 	if input == "" {
 		return ""
 	}
