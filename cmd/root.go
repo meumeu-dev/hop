@@ -261,6 +261,11 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	}
 
 	fmt.Fprintln(os.Stderr, "Aucune connexion disponible.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "La machine n'est pas joignable en LAN et aucun tunnel n'est configure.")
+	fmt.Fprintln(os.Stderr, "Options:")
+	fmt.Fprintln(os.Stderr, "  - Sur la machine distante: hop tunnel quick  (tunnel temporaire)")
+	fmt.Fprintln(os.Stderr, "  - Sur la machine distante: hop tunnel setup  (tunnel permanent)")
 	os.Exit(1)
 	return "", false
 }
