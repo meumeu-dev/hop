@@ -43,7 +43,8 @@ func Register(tunnelURL string) error {
 	machineID := MachineID()
 	token := machineToken()
 
-	body := fmt.Sprintf(`{"url":"%s","token":"%s"}`, tunnelURL, token)
+	bodyData, _ := json.Marshal(map[string]string{"url": tunnelURL, "token": token})
+	body := string(bodyData)
 	resp, err := httpClient.Post(workerURL+"/tunnel/"+machineID, "application/json", strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("erreur enregistrement tunnel: %w", err)

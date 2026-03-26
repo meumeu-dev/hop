@@ -26,6 +26,7 @@ type pairEntry struct {
 
 type tunnelEntry struct {
 	URL       string    `json:"url"`
+	TokenHash string    `json:"-"`
 	CreatedAt time.Time `json:"-"`
 }
 
@@ -75,12 +76,16 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
+const maxBodySize = 1 << 20 // 1MB
+const maxPairs = 1000
+
 func (s *relayStore) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var body struct {
 		Data string `json:"data"`
 	}
@@ -93,6 +98,11 @@ func (s *relayStore) handlePairCreate(w http.ResponseWriter, r *http.Request) {
 	token := generateToken()
 
 	s.mu.Lock()
+	if len(s.pairs) >= maxPairs {
+		s.mu.Unlock()
+		http.Error(w, "Too many active pairs", http.StatusTooManyRequests)
+		return
+	}
 	s.pairs[pairID] = &pairEntry{
 		Data:      body.Data,
 		TokenHash: hashToken(token),
@@ -159,6 +169,8 @@ func (s *relayStore) handleResponsePost(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -229,17 +241,30 @@ func (s *relayStore) handleTunnelRegister(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
 	var body struct {
-		URL string `json:"url"`
+		URL   string `json:"url"`
+		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.URL == "" || body.Token == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
+	tokenHash := hashToken(body.Token)
+
 	s.mu.Lock()
+	// Check if already registered with different token
+	if existing, ok := s.tunnels[machineID]; ok {
+		if existing.TokenHash != "" && existing.TokenHash != tokenHash {
+			s.mu.Unlock()
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
 	s.tunnels[machineID] = &tunnelEntry{
 		URL:       body.URL,
+		TokenHash: tokenHash,
 		CreatedAt: time.Now(),
 	}
 	s.mu.Unlock()

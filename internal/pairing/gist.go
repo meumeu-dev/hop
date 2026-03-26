@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var validGistID = regexp.MustCompile(`^[a-f0-9]{20,40}$`)
 
 // PublishGist creates a private GitHub gist with encrypted pair data.
 // Returns the gist ID.
@@ -59,9 +62,19 @@ func PublishGist(code string, data *PairData) (string, error) {
 	return gistID, nil
 }
 
+// ValidateGistID checks that a gist ID is a valid hex string
+func ValidateGistID(gistID string) error {
+	if !validGistID.MatchString(gistID) {
+		return fmt.Errorf("gist ID invalide")
+	}
+	return nil
+}
+
 // FetchGist retrieves and decrypts pair data from a GitHub gist.
 func FetchGist(gistID string, code string) (*PairData, error) {
-	// Fetch gist content using gh API
+	if err := ValidateGistID(gistID); err != nil {
+		return nil, err
+	}
 	cmd := exec.Command("gh", "api", fmt.Sprintf("gists/%s", gistID), "--jq", ".files[\"hop-pair.enc\"].content")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -88,6 +101,9 @@ func FetchGist(gistID string, code string) (*PairData, error) {
 
 // PostGistResponse adds a response file to an existing gist.
 func PostGistResponse(gistID string, code string, data *PairData) error {
+	if err := ValidateGistID(gistID); err != nil {
+		return err
+	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -123,6 +139,9 @@ func PostGistResponse(gistID string, code string, data *PairData) error {
 
 // WaitGistResponse polls a gist for the response file.
 func WaitGistResponse(gistID string, code string, timeout time.Duration) (*PairData, error) {
+	if err := ValidateGistID(gistID); err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		cmd := exec.Command("gh", "api", fmt.Sprintf("gists/%s", gistID), "--jq", ".files[\"hop-pair-response.enc\"].content")
@@ -156,5 +175,8 @@ func WaitGistResponse(gistID string, code string, timeout time.Duration) (*PairD
 
 // CleanupGist deletes a gist.
 func CleanupGist(gistID string) {
+	if ValidateGistID(gistID) != nil {
+		return
+	}
 	exec.Command("gh", "gist", "delete", gistID).Run()
 }

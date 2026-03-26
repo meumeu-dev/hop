@@ -81,7 +81,7 @@ func StartLANServer(code string, data *PairData) (*PairData, error) {
 		defer conn.Close()
 
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		respData, err := io.ReadAll(conn)
+		respData, err := io.ReadAll(io.LimitReader(conn, 65536))
 		if err != nil {
 			errCh <- fmt.Errorf("erreur lecture réponse TCP: %w", err)
 			return
@@ -245,7 +245,7 @@ func StartLANServerWithTimeout(code string, data *PairData, timeout time.Duratio
 		defer conn.Close()
 
 		conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		respData, err := io.ReadAll(conn)
+		respData, err := io.ReadAll(io.LimitReader(conn, 65536))
 		if err != nil {
 			errCh <- fmt.Errorf("erreur lecture réponse TCP: %w", err)
 			return

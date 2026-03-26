@@ -285,7 +285,7 @@ func remoteGet(remote config.Remote, path string) (*http.Response, error) {
 
 func handlePing(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, DashboardVersion)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": DashboardVersion})
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
