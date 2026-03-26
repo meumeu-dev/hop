@@ -81,6 +81,30 @@ func buildPairData() (string, *pairing.PairData) {
 func runPairServer() {
 	code, data := buildPairData()
 
+	// Ask mode if not specified via flag
+	if pairMode == "" || pairMode == "auto" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Mode de pairing:")
+		fmt.Println("  1) Auto (LAN + relay en parallele)")
+		fmt.Println("  2) LAN uniquement")
+		fmt.Println("  3) Relay uniquement")
+		fmt.Println("  4) GitHub Gist")
+		fmt.Print("Choix [1]: ")
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+		switch choice {
+		case "2", "lan":
+			pairMode = "lan"
+		case "3", "relay":
+			pairMode = "relay"
+		case "4", "gist":
+			pairMode = "gist"
+		default:
+			pairMode = "auto"
+		}
+		fmt.Println()
+	}
+
 	switch pairMode {
 	case "lan":
 		runPairServerLAN(code, data)
@@ -91,11 +115,6 @@ func runPairServer() {
 	case "gist":
 		runPairServerGist(code, data)
 		return
-	case "auto", "":
-		// continue below
-	default:
-		fmt.Fprintf(os.Stderr, "Mode inconnu: %s (auto, lan, relay, gist)\n", pairMode)
-		os.Exit(1)
 	}
 
 	// Default: register on worker + broadcast LAN simultaneously
