@@ -222,10 +222,6 @@ var tunnelQuickCmd = &cobra.Command{
 
 			var err error
 			switch tunnelProvider {
-			case "trycloudflare":
-				err = runTunnelCloudflare()
-			case "localhost.run":
-				err = runTunnelSSH("localhost.run", "ssh", "-R", "80:localhost:22", "nokey@localhost.run")
 			case "bore":
 				err = runTunnelBore()
 			case "cloudflare":
@@ -253,23 +249,20 @@ var tunnelQuickCmd = &cobra.Command{
 func askTunnelProvider() string {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Provider de tunnel:")
-	fmt.Println("  1) trycloudflare  (auto-install cloudflared)")
-	fmt.Println("  2) bore.pub      (auto-install bore)")
-	fmt.Println("  3) Cloudflare    (tunnel permanent, necessite compte CF)")
-	fmt.Println("  4) Worker perso  (configurer ton propre relay)")
+	fmt.Println("  1) bore.pub      (auto-install, TCP direct)")
+	fmt.Println("  2) Cloudflare    (tunnel permanent, necessite compte CF)")
+	fmt.Println("  3) Worker perso  (configurer ton propre relay)")
 	fmt.Print("Choix [1]: ")
 	choice, _ := reader.ReadString('\n')
 	choice = strings.TrimSpace(choice)
 	fmt.Println()
 	switch choice {
-	case "2", "bore":
-		return "bore"
-	case "3", "cloudflare", "cf":
+	case "2", "cloudflare", "cf":
 		return "cloudflare"
-	case "4", "worker":
+	case "3", "worker":
 		return "worker"
 	default:
-		return "trycloudflare"
+		return "bore"
 	}
 }
 
@@ -293,107 +286,11 @@ func registerAndKeepAlive(tunnelHost string) {
 	}()
 }
 
-func runTunnelCloudflare() error {
-	cfPath, err := cf.EnsureInstalled()
-	if err != nil {
-		return fmt.Errorf("cloudflared: %w", err)
-	}
-
-	fmt.Println("→ Lancement du tunnel trycloudflare...")
-
-	tunnelCmd := exec.Command(cfPath, "tunnel", "--url", "ssh://localhost:22")
-	stderrPipe, err := tunnelCmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("pipe: %w", err)
-	}
-	tunnelCmd.Stdout = os.Stdout
-
-	if err := tunnelCmd.Start(); err != nil {
-		return fmt.Errorf("lancement: %w", err)
-	}
-
-	scanner := bufio.NewScanner(stderrPipe)
-	tunnelURL := ""
-	for scanner.Scan() {
-		line := scanner.Text()
-		// cloudflared prints: https://xxx-yyy-zzz.trycloudflare.com
-		// We need the full subdomain URL, not just "trycloudflare.com"
-		if strings.Contains(line, ".trycloudflare.com") {
-			for _, word := range strings.Fields(line) {
-				word = strings.Trim(word, ".,;\"'`|")
-				// Must have a subdomain (not just trycloudflare.com)
-				if strings.HasSuffix(word, ".trycloudflare.com") || strings.Contains(word, ".trycloudflare.com/") {
-					if !strings.HasPrefix(word, "https://") {
-						word = "https://" + word
-					}
-					tunnelURL = strings.TrimRight(word, "/")
-					break
-				}
-			}
-			if tunnelURL != "" {
-				break
-			}
-		}
-	}
-
-	if tunnelURL == "" {
-		tunnelCmd.Process.Kill()
-		return fmt.Errorf("impossible de recuperer l'URL du tunnel")
-	}
-
-	tunnelHost := strings.TrimPrefix(tunnelURL, "https://")
-	fmt.Printf("→ Tunnel actif: %s\n", tunnelURL)
-
-	registerAndKeepAlive(tunnelHost)
-	return tunnelCmd.Wait()
-}
-
-func runTunnelSSH(provider string, sshArgs ...string) error {
-	fmt.Printf("→ Lancement du tunnel via %s...\n", provider)
-	fmt.Println("  (zero installation requise)")
-	fmt.Println()
-
-	tunnelCmd := exec.Command(sshArgs[0], sshArgs[1:]...)
-
-	stderrPipe, _ := tunnelCmd.StderrPipe()
-	stdoutPipe, _ := tunnelCmd.StdoutPipe()
-	tunnelCmd.Stdin = os.Stdin
-
-	if err := tunnelCmd.Start(); err != nil {
-		return fmt.Errorf("%s: %w", provider, err)
-	}
-
-	// Read output silently, only show tunnel URL when found
-	go func() {
-		s := bufio.NewScanner(stderrPipe)
-		for s.Scan() {
-			checkAndRegisterTunnelURL(s.Text(), provider)
-		}
-	}()
-
-	go func() {
-		s := bufio.NewScanner(stdoutPipe)
-		for s.Scan() {
-			checkAndRegisterTunnelURL(s.Text(), provider)
-		}
-	}()
-
-	fmt.Println("  En attente de l'URL du tunnel...")
-	fmt.Println("  Ctrl+C pour arreter.")
-	fmt.Println()
-
-	if err := tunnelCmd.Wait(); err != nil {
-		return fmt.Errorf("%s: %w", provider, err)
-	}
-	return nil
-}
 
 // knownTunnelDomains are suffixes that indicate a real tunnel URL (not docs/marketing)
 var knownTunnelDomains = []string{
-	".trycloudflare.com",
-	".lhr.life",    // localhost.run
-	".bore.pub",    // bore
-	"bore.pub:",    // bore with port
+	".bore.pub",
+	"bore.pub:",
 }
 
 func checkAndRegisterTunnelURL(line string, provider string) {

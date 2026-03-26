@@ -268,18 +268,27 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	}
 	if hostname != "" {
 		if dynURL, err := tunnel.Resolve(hostname); err == nil && dynURL != "" {
-			// Determine tunnel type by domain
-			if strings.HasSuffix(dynURL, ".trycloudflare.com") {
-				// Cloudflare tunnel — use cloudflared proxy
-				if _, err := cloudflared.EnsureInstalled(); err != nil {
-					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-					os.Exit(1)
-				}
-				fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
-				return m.User + "@" + dynURL, true
-			}
-			// Other tunnels (localhost.run, bore) — direct SSH to hostname:port
+			// bore tunnel: direct SSH to host:port
 			fmt.Printf("→ Connexion via tunnel dynamique (%s)\n", dynURL)
+			// Parse host:port for SSH
+			if strings.Contains(dynURL, ":") {
+				parts := strings.SplitN(dynURL, ":", 2)
+				sshHost := parts[0]
+				sshPort := parts[1]
+				fmt.Printf("→ SSH vers %s port %s\n", sshHost, sshPort)
+				args := []string{"-p", sshPort, m.User + "@" + sshHost}
+				sh := exec.Command("ssh", args...)
+				sh.Stdin = os.Stdin
+				sh.Stdout = os.Stdout
+				sh.Stderr = os.Stderr
+				err := sh.Run()
+				if err != nil {
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						os.Exit(exitErr.ExitCode())
+					}
+				}
+				os.Exit(0)
+			}
 			return m.User + "@" + dynURL, false
 		}
 	}
