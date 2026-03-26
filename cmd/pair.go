@@ -711,12 +711,15 @@ func checkAndOfferTunnel(remoteHostname string) {
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Print("Lancer un tunnel pour que l'autre machine puisse se connecter ? [o/N]: ")
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	fmt.Println("Options:")
+	fmt.Println("  1) Lancer un tunnel maintenant")
+	fmt.Println("  2) Non, plus tard (hop tunnel quick)")
+	fmt.Print("Choix [1]: ")
+	choice, _ := reader.ReadString('\n')
+	choice = strings.TrimSpace(choice)
 
-	if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
-		fmt.Println("  Tu peux le faire plus tard: hop tunnel quick")
+	if choice == "2" || choice == "n" || choice == "non" {
+		fmt.Println("  → hop tunnel quick quand tu voudras.")
 		return
 	}
 

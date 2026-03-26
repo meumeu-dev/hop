@@ -208,105 +208,287 @@ func loadEnvFile(path string) {
 	}
 }
 
+var tunnelProvider string
+
 var tunnelQuickCmd = &cobra.Command{
 	Use:   "quick",
-	Short: "Lance un tunnel temporaire (trycloudflare, zero config)",
+	Short: "Lance un tunnel temporaire (zero config, plusieurs providers)",
 	Run: func(cmd *cobra.Command, args []string) {
-		cfPath, err := cf.EnsureInstalled()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-			os.Exit(1)
-		}
-
-		fmt.Println("→ Lancement du tunnel temporaire...")
-
-		// Start cloudflared in background, capture URL from stderr
-		tunnelCmd := exec.Command(cfPath, "tunnel", "--url", "ssh://localhost:22")
-
-		// cloudflared outputs the URL on stderr
-		stderrPipe, err := tunnelCmd.StderrPipe()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-			os.Exit(1)
-		}
-		tunnelCmd.Stdout = os.Stdout
-
-		if err := tunnelCmd.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur lancement tunnel: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Read stderr to find the URL
-		scanner := bufio.NewScanner(stderrPipe)
-		tunnelURL := ""
-		for scanner.Scan() {
-			line := scanner.Text()
-			// cloudflared prints: https://xxx.trycloudflare.com
-			if strings.Contains(line, "trycloudflare.com") {
-				// Extract URL
-				for _, word := range strings.Fields(line) {
-					if strings.Contains(word, "trycloudflare.com") {
-						tunnelURL = strings.TrimRight(word, ".,;")
-						// Ensure https prefix
-						if !strings.HasPrefix(tunnelURL, "https://") {
-							tunnelURL = "https://" + tunnelURL
-						}
-						break
-					}
-				}
-				if tunnelURL != "" {
-					break
-				}
+		if tunnelProvider == "" {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Println("Provider de tunnel:")
+			fmt.Println("  1) trycloudflare (auto-install cloudflared)")
+			fmt.Println("  2) localhost.run (zero install, via SSH)")
+			fmt.Println("  3) serveo.net   (zero install, via SSH)")
+			fmt.Println("  4) bore.pub     (auto-install bore)")
+			fmt.Print("Choix [1]: ")
+			choice, _ := reader.ReadString('\n')
+			choice = strings.TrimSpace(choice)
+			switch choice {
+			case "2", "localhost.run":
+				tunnelProvider = "localhost.run"
+			case "3", "serveo.net":
+				tunnelProvider = "serveo.net"
+			case "4", "bore":
+				tunnelProvider = "bore"
+			default:
+				tunnelProvider = "trycloudflare"
 			}
+			fmt.Println()
 		}
 
-		if tunnelURL == "" {
-			fmt.Fprintln(os.Stderr, "Erreur: impossible de recuperer l'URL du tunnel")
-			tunnelCmd.Process.Kill()
+		switch tunnelProvider {
+		case "trycloudflare":
+			runTunnelCloudflare()
+		case "localhost.run":
+			runTunnelSSH("localhost.run", "ssh", "-R", "80:localhost:22", "nokey@localhost.run")
+		case "serveo.net":
+			runTunnelSSH("serveo.net", "ssh", "-R", "0:localhost:22", "serveo.net")
+		case "bore":
+			runTunnelBore()
+		default:
+			fmt.Fprintf(os.Stderr, "Provider inconnu: %s\n", tunnelProvider)
 			os.Exit(1)
 		}
-
-		// Extract hostname from URL
-		tunnelHost := strings.TrimPrefix(tunnelURL, "https://")
-
-		fmt.Printf("→ Tunnel actif: %s\n", tunnelURL)
-
-		// Register on worker
-		if err := tunnel.Register(tunnelHost); err != nil {
-			fmt.Printf("→ Warning: enregistrement worker echoue: %v\n", err)
-		} else {
-			fmt.Printf("→ Enregistre sur le worker (resolv auto pour les autres machines)\n")
-		}
-
-		// Store in config
-		cfg, _ := config.Load()
-		if cfg != nil {
-			hostname, _ := os.Hostname()
-			// Update tunnel for this machine if it exists in other machines' configs
-			// But mainly store it for pairing
-			_ = hostname
-			_ = cfg
-		}
-
-		fmt.Println()
-		fmt.Println("Le tunnel reste actif tant que ce processus tourne.")
-		fmt.Println("Ctrl+C pour arreter.")
-		fmt.Println()
-
-		// Keep re-registering every 30 minutes
-		go func() {
-			for {
-				<-time.After(30 * time.Minute)
-				tunnel.Register(tunnelHost)
-			}
-		}()
-
-		// Wait for cloudflared to exit
-		tunnelCmd.Wait()
 	},
 }
 
+func registerAndKeepAlive(tunnelHost string) {
+	if err := tunnel.Register(tunnelHost); err != nil {
+		fmt.Printf("→ Warning: enregistrement worker echoue: %v\n", err)
+	} else {
+		fmt.Println("→ Enregistre sur le worker (resolv auto pour les autres machines)")
+	}
+
+	fmt.Println()
+	fmt.Println("Le tunnel reste actif tant que ce processus tourne.")
+	fmt.Println("Ctrl+C pour arreter.")
+	fmt.Println()
+
+	go func() {
+		for {
+			<-time.After(30 * time.Minute)
+			tunnel.Register(tunnelHost)
+		}
+	}()
+}
+
+func runTunnelCloudflare() {
+	cfPath, err := cf.EnsureInstalled()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("→ Lancement du tunnel trycloudflare...")
+
+	tunnelCmd := exec.Command(cfPath, "tunnel", "--url", "ssh://localhost:22")
+	stderrPipe, err := tunnelCmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+	tunnelCmd.Stdout = os.Stdout
+
+	if err := tunnelCmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur lancement tunnel: %v\n", err)
+		os.Exit(1)
+	}
+
+	scanner := bufio.NewScanner(stderrPipe)
+	tunnelURL := ""
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, "trycloudflare.com") {
+			for _, word := range strings.Fields(line) {
+				if strings.Contains(word, "trycloudflare.com") {
+					tunnelURL = strings.TrimRight(word, ".,;")
+					if !strings.HasPrefix(tunnelURL, "https://") {
+						tunnelURL = "https://" + tunnelURL
+					}
+					break
+				}
+			}
+			if tunnelURL != "" {
+				break
+			}
+		}
+	}
+
+	if tunnelURL == "" {
+		fmt.Fprintln(os.Stderr, "Erreur: impossible de recuperer l'URL du tunnel")
+		tunnelCmd.Process.Kill()
+		os.Exit(1)
+	}
+
+	tunnelHost := strings.TrimPrefix(tunnelURL, "https://")
+	fmt.Printf("→ Tunnel actif: %s\n", tunnelURL)
+
+	registerAndKeepAlive(tunnelHost)
+	tunnelCmd.Wait()
+}
+
+func runTunnelSSH(provider string, sshArgs ...string) {
+	fmt.Printf("→ Lancement du tunnel via %s...\n", provider)
+	fmt.Println("  (zero installation requise)")
+	fmt.Println()
+
+	tunnelCmd := exec.Command(sshArgs[0], sshArgs[1:]...)
+
+	// Capture output to find the assigned URL/port
+	stderrPipe, _ := tunnelCmd.StderrPipe()
+	stdoutPipe, _ := tunnelCmd.StdoutPipe()
+	tunnelCmd.Stdin = os.Stdin
+
+	if err := tunnelCmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Read output for tunnel URL
+	go func() {
+		s := bufio.NewScanner(stderrPipe)
+		for s.Scan() {
+			line := s.Text()
+			fmt.Fprintln(os.Stderr, line)
+			checkAndRegisterTunnelURL(line, provider)
+		}
+	}()
+
+	go func() {
+		s := bufio.NewScanner(stdoutPipe)
+		for s.Scan() {
+			line := s.Text()
+			fmt.Println(line)
+			checkAndRegisterTunnelURL(line, provider)
+		}
+	}()
+
+	fmt.Printf("→ Tunnel %s actif.\n", provider)
+	fmt.Println("  Ctrl+C pour arreter.")
+	fmt.Println()
+
+	tunnelCmd.Wait()
+}
+
+func checkAndRegisterTunnelURL(line string, provider string) {
+	// Look for URLs in the output
+	for _, word := range strings.Fields(line) {
+		if strings.Contains(word, provider) || strings.Contains(word, "https://") || strings.Contains(word, "tcp://") {
+			url := strings.TrimRight(word, ".,;\"'")
+			if strings.Contains(url, ".") && !strings.HasPrefix(url, "-") {
+				host := strings.TrimPrefix(url, "https://")
+				host = strings.TrimPrefix(host, "http://")
+				host = strings.TrimPrefix(host, "tcp://")
+				if host != "" && strings.Contains(host, ".") {
+					fmt.Printf("\n→ Tunnel detecte: %s\n", host)
+					tunnel.Register(host)
+				}
+			}
+		}
+	}
+}
+
+func runTunnelBore() {
+	borePath := findOrInstallBore()
+
+	fmt.Println("→ Lancement du tunnel via bore.pub...")
+
+	tunnelCmd := exec.Command(borePath, "local", "22", "--to", "bore.pub")
+	tunnelCmd.Stdin = os.Stdin
+
+	stderrPipe, _ := tunnelCmd.StderrPipe()
+	stdoutPipe, _ := tunnelCmd.StdoutPipe()
+
+	if err := tunnelCmd.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
+	go func() {
+		s := bufio.NewScanner(stderrPipe)
+		for s.Scan() {
+			line := s.Text()
+			fmt.Fprintln(os.Stderr, line)
+			// bore prints: listening at bore.pub:<port>
+			if strings.Contains(line, "bore.pub:") {
+				for _, word := range strings.Fields(line) {
+					if strings.Contains(word, "bore.pub:") {
+						host := strings.TrimRight(word, ".,;")
+						fmt.Printf("\n→ Tunnel actif: %s\n", host)
+						tunnel.Register(host)
+					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		s := bufio.NewScanner(stdoutPipe)
+		for s.Scan() {
+			fmt.Println(s.Text())
+		}
+	}()
+
+	fmt.Println("  Ctrl+C pour arreter.")
+	tunnelCmd.Wait()
+}
+
+func findOrInstallBore() string {
+	// Check if bore is already installed
+	if p, err := exec.LookPath("bore"); err == nil {
+		return p
+	}
+
+	binDir := config.HopDir() + "/bin"
+	borePath := binDir + "/bore"
+	if _, err := os.Stat(borePath); err == nil {
+		return borePath
+	}
+
+	// Auto-install
+	fmt.Println("→ Installation de bore...")
+	os.MkdirAll(binDir, 0700)
+
+	arch := "x86_64"
+	switch strings.ToLower(os.Getenv("GOARCH")) {
+	case "arm64":
+		arch = "aarch64"
+	case "arm":
+		arch = "armv7"
+	}
+	// Use runtime arch
+	switch {
+	case strings.Contains(arch, "x86"):
+		// default
+	}
+
+	url := fmt.Sprintf("https://github.com/ekzhang/bore/releases/latest/download/bore-v0.5.2-%s-unknown-linux-musl.tar.gz", arch)
+	fmt.Printf("→ Telechargement depuis %s...\n", url)
+
+	// Download and extract
+	tmpFile := "/tmp/bore.tar.gz"
+	dlCmd := exec.Command("curl", "-sSL", "-o", tmpFile, url)
+	if err := dlCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur telechargement bore: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Installe manuellement: https://github.com/ekzhang/bore")
+		os.Exit(1)
+	}
+
+	extractCmd := exec.Command("tar", "-xzf", tmpFile, "-C", binDir, "bore")
+	if err := extractCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur extraction: %v\n", err)
+		os.Exit(1)
+	}
+	os.Remove(tmpFile)
+	os.Chmod(borePath, 0755)
+
+	fmt.Println("→ bore installe dans ~/.hop/bin/")
+	return borePath
+}
+
 func init() {
+	tunnelQuickCmd.Flags().StringVarP(&tunnelProvider, "provider", "p", "", "Provider: trycloudflare, localhost.run, serveo.net, bore")
 	tunnelCmd.AddCommand(tunnelSetupCmd)
 	tunnelCmd.AddCommand(tunnelStatusCmd)
 	tunnelCmd.AddCommand(tunnelQuickCmd)
