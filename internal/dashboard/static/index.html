@@ -267,7 +267,7 @@
                         <h4 style="color: #58a6ff; margin-bottom: 12px;">Se connecter a une machine</h4>
                         <p style="font-size: 13px; color: #8b949e; margin-bottom: 12px;">Entre le code affiche sur l'autre machine :</p>
                         <div style="display: flex; gap: 8px;">
-                            <input type="text" id="pair-code" placeholder="847291" maxlength="6" style="flex:1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e1e4e8; font-size: 18px; text-align: center; letter-spacing: 4px;">
+                            <input type="text" id="pair-code" placeholder="Colle le token ici" style="flex:1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e1e4e8; font-size: 14px;">
                             <button onclick="doPairing()" style="background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Connecter</button>
                         </div>
                         <p id="pair-status" style="font-size: 12px; margin-top: 8px; color: #8b949e;"></p>
@@ -677,10 +677,10 @@
 
         // --- Pairing ---
         async function doPairing() {
-            const code = document.getElementById('pair-code').value.trim();
+            const pairToken = document.getElementById('pair-code').value.trim();
             const status = document.getElementById('pair-status');
-            if (!/^\d{6}$/.test(code)) {
-                status.textContent = 'Le code doit etre 6 chiffres.';
+            if (!pairToken || pairToken.split('.').length !== 3) {
+                status.textContent = 'Colle le token complet affiche par hop pair.';
                 status.style.color = '#f85149';
                 return;
             }
@@ -691,7 +691,7 @@
                 const res = await fetch(API + '/api/pair', {
                     method: 'POST',
                     headers: authHeaders(),
-                    body: JSON.stringify({code}),
+                    body: JSON.stringify({pair_token: pairToken}),
                 });
                 const data = await res.json();
                 if (data.ok) {

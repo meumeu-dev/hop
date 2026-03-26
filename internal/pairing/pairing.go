@@ -31,10 +31,15 @@ type PairData struct {
 	User      string `json:"user"`
 	PublicKey string `json:"public_key"`
 	Tunnel    string `json:"tunnel,omitempty"`
-	// Cloudflare config (sent from main PC to new machine)
-	CFDomain  string `json:"cf_domain,omitempty"`
-	CFEmail   string `json:"cf_email,omitempty"`
-	CFAPIKey  string `json:"cf_api_key,omitempty"`
+	// CF domain only (not the API key — that goes via SSH after pairing)
+	CFDomain string `json:"cf_domain,omitempty"`
+}
+
+// PairSession holds the state of a pairing session
+type PairSession struct {
+	PairID string // UUID returned by worker (lookup key)
+	Token  string // Bearer token for auth
+	Code   string // 6-digit code (encryption key only, never sent to worker)
 }
 
 // GenerateCode creates a 6-digit pairing code
@@ -43,10 +48,13 @@ func GenerateCode() string {
 	return fmt.Sprintf("%06d", n.Int64()+100000)
 }
 
-// deriveKey derives a 32-byte AES key from the 6-digit code
+// deriveKey derives a 32-byte AES key from the code using PBKDF2-like stretching
 func deriveKey(code string) []byte {
-	// Use SHA-256 of the code as the encryption key
-	hash := sha256.Sum256([]byte("hop-pair-" + code))
+	// Multiple rounds of SHA-256 to slow brute-force
+	hash := sha256.Sum256([]byte("hop-pair-v2-" + code))
+	for i := 0; i < 100000; i++ {
+		hash = sha256.Sum256(hash[:])
+	}
 	return hash[:]
 }
 
@@ -107,7 +115,6 @@ func EnsureSSHKey() (string, string, error) {
 	privPath := filepath.Join(keysDir, "hop_ed25519")
 	pubPath := privPath + ".pub"
 
-	// Check if already exists
 	if _, err := os.Stat(privPath); err == nil {
 		pubData, err := os.ReadFile(pubPath)
 		if err != nil {
@@ -116,13 +123,11 @@ func EnsureSSHKey() (string, string, error) {
 		return privPath, strings.TrimSpace(string(pubData)), nil
 	}
 
-	// Generate new key pair
 	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return "", "", err
 	}
 
-	// Marshal private key to PEM
 	privBytes, err := ssh.MarshalPrivateKey(privKey, "")
 	if err != nil {
 		return "", "", err
@@ -132,7 +137,6 @@ func EnsureSSHKey() (string, string, error) {
 		return "", "", err
 	}
 
-	// Marshal public key to authorized_keys format
 	sshPub, err := ssh.NewPublicKey(pubKey)
 	if err != nil {
 		return "", "", err
@@ -146,42 +150,89 @@ func EnsureSSHKey() (string, string, error) {
 	return privPath, pubStr, nil
 }
 
-// PublishPairData encrypts and sends pair data to the worker
-func PublishPairData(code string, data *PairData) error {
-	jsonData, err := json.Marshal(data)
-	if err != nil {
-		return err
+// ValidateSSHPublicKey checks that a string is a valid SSH public key with no options
+func ValidateSSHPublicKey(pubKey string) error {
+	// Reject newlines (multi-key injection)
+	if strings.Contains(pubKey, "\n") {
+		return fmt.Errorf("clé SSH invalide: contient des retours à la ligne")
 	}
 
-	encrypted, err := Encrypt(jsonData, code)
+	// Parse the key
+	_, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKey))
 	if err != nil {
-		return err
+		return fmt.Errorf("clé SSH invalide: %w", err)
 	}
 
-	body := fmt.Sprintf(`{"code":"%s","data":"%s"}`, code, encrypted)
-	resp, err := http.Post(WorkerURL+"/pair", "application/json", strings.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
+	// Reject keys with options (command=, cert-authority, etc.)
+	parts := strings.Fields(pubKey)
+	if len(parts) < 2 {
+		return fmt.Errorf("clé SSH invalide")
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("erreur serveur: HTTP %d", resp.StatusCode)
+	keyType := parts[0]
+	validTypes := []string{"ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com"}
+	valid := false
+	for _, t := range validTypes {
+		if keyType == t {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("clé SSH invalide: type inconnu ou options détectées")
 	}
 
 	return nil
 }
 
+// PublishPairData encrypts and sends pair data to the worker
+// Returns a PairSession with the UUID lookup key and bearer token
+func PublishPairData(code string, data *PairData) (*PairSession, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	encrypted, err := Encrypt(jsonData, code)
+	if err != nil {
+		return nil, err
+	}
+
+	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
+	resp, err := http.Post(WorkerURL+"/pair", "application/json", strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("erreur serveur: HTTP %d", resp.StatusCode)
+	}
+
+	var result struct {
+		PairID string `json:"pair_id"`
+		Token  string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &PairSession{
+		PairID: result.PairID,
+		Token:  result.Token,
+		Code:   code,
+	}, nil
+}
+
 // FetchPairData retrieves and decrypts pair data from the worker
-func FetchPairData(code string) (*PairData, error) {
-	resp, err := http.Get(WorkerURL + "/pair/" + code)
+func FetchPairData(pairID string, code string) (*PairData, error) {
+	resp, err := http.Get(WorkerURL + "/pair/" + pairID)
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 404 {
-		return nil, fmt.Errorf("code invalide ou expiré")
+		return nil, fmt.Errorf("pairing non trouvé ou expiré")
 	}
 
 	var result struct {
@@ -204,32 +255,50 @@ func FetchPairData(code string) (*PairData, error) {
 	return &pairData, nil
 }
 
-// SendResponse sends the PC's response (public key) back through the worker
-func SendResponse(code string, data *PairData) error {
+// SendResponse sends the client's response back through the worker (requires token)
+func SendResponse(session *PairSession, data *PairData) error {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
 
-	encrypted, err := Encrypt(jsonData, code)
+	encrypted, err := Encrypt(jsonData, session.Code)
 	if err != nil {
 		return err
 	}
 
 	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
-	resp, err := http.Post(WorkerURL+"/pair/"+code+"/response", "application/json", strings.NewReader(body))
+	req, err := http.NewRequest("POST", WorkerURL+"/pair/"+session.PairID+"/response", strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Pair-Token", session.Token)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == 409 {
+		return fmt.Errorf("une réponse a déjà été postée (possible attaque)")
+	}
+	if resp.StatusCode == 401 {
+		return fmt.Errorf("token invalide")
+	}
+
 	return nil
 }
 
-// WaitForResponse polls the worker for the PC's response
-func WaitForResponse(code string, timeout time.Duration) (*PairData, error) {
+// WaitForResponse polls the worker for the client's response (requires token)
+func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(WorkerURL + "/pair/" + code + "/response")
+		req, _ := http.NewRequest("GET", WorkerURL+"/pair/"+session.PairID+"/response", nil)
+		req.Header.Set("X-Pair-Token", session.Token)
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			time.Sleep(2 * time.Second)
 			continue
@@ -247,7 +316,7 @@ func WaitForResponse(code string, timeout time.Duration) (*PairData, error) {
 		json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
 
-		decrypted, err := Decrypt(result.Data, code)
+		decrypted, err := Decrypt(result.Data, session.Code)
 		if err != nil {
 			return nil, fmt.Errorf("déchiffrement échoué")
 		}
@@ -260,23 +329,28 @@ func WaitForResponse(code string, timeout time.Duration) (*PairData, error) {
 	return nil, fmt.Errorf("timeout: pas de réponse reçue")
 }
 
-// Cleanup deletes pairing data from the worker
-func Cleanup(code string) {
-	req, _ := http.NewRequest("DELETE", WorkerURL+"/pair/"+code, nil)
+// Cleanup deletes pairing data from the worker (requires token)
+func Cleanup(session *PairSession) {
+	req, _ := http.NewRequest("DELETE", WorkerURL+"/pair/"+session.PairID, nil)
+	req.Header.Set("X-Pair-Token", session.Token)
 	http.DefaultClient.Do(req)
 }
 
-// AddAuthorizedKey adds a public key to ~/.ssh/authorized_keys
+// AddAuthorizedKey adds a validated public key to ~/.ssh/authorized_keys
 func AddAuthorizedKey(pubKey string) error {
+	// Validate the key first
+	if err := ValidateSSHPublicKey(pubKey); err != nil {
+		return err
+	}
+
 	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
 	os.MkdirAll(sshDir, 0700)
 
 	authKeysPath := filepath.Join(sshDir, "authorized_keys")
 
-	// Check if key already exists
 	if existing, err := os.ReadFile(authKeysPath); err == nil {
 		if strings.Contains(string(existing), pubKey) {
-			return nil // Already added
+			return nil
 		}
 	}
 
@@ -290,8 +364,8 @@ func AddAuthorizedKey(pubKey string) error {
 	return err
 }
 
-// ApplyCFConfig saves the Cloudflare config received from pairing
-func ApplyCFConfig(cfDomain, cfEmail, cfAPIKey string) error {
+// ApplyCFConfig saves the Cloudflare domain config (NOT the API key — that goes via SSH)
+func ApplyCFConfig(cfDomain string) error {
 	if cfDomain == "" {
 		return nil
 	}
@@ -301,19 +375,16 @@ func ApplyCFConfig(cfDomain, cfEmail, cfAPIKey string) error {
 		return err
 	}
 
-	// Write env file
-	envPath := filepath.Join(config.HopDir(), "cloudflare.env")
-	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", cfEmail, cfDomain, cfAPIKey)
-	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
-		return err
-	}
-
 	cfg.Cloudflare = config.CloudflareConfig{
-		Domain:  cfDomain,
-		EnvFile: "~/.hop/cloudflare.env",
+		Domain: cfDomain,
 	}
 
 	return cfg.Save()
+}
+
+// BuildCFEnvContent creates the content for the cloudflare.env file
+func BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain string) string {
+	return fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", cfEmail, cfDomain, cfAPIKey)
 }
 
 // LoadCFCredentials reads the CF credentials from the env file

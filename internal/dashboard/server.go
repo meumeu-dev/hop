@@ -723,7 +723,7 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 }
 
 type pairReq struct {
-	Code string `json:"code"`
+	PairToken string `json:"pair_token"` // format: pairID.code.token
 }
 
 func handlePair(w http.ResponseWriter, r *http.Request) {
@@ -739,10 +739,23 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse pair token
+	parts := strings.SplitN(req.PairToken, ".", 3)
+	if len(parts) != 3 {
+		jsonError(w, "token invalide", 400)
+		return
+	}
+	pairID, code, token := parts[0], parts[1], parts[2]
+
 	// Fetch server's pair data
-	serverData, err := pairing.FetchPairData(req.Code)
+	serverData, err := pairing.FetchPairData(pairID, code)
 	if err != nil {
 		jsonError(w, err.Error(), 400)
+		return
+	}
+
+	if err := config.ValidateName(serverData.Hostname); err != nil {
+		jsonError(w, "hostname distant invalide", 400)
 		return
 	}
 
@@ -754,26 +767,43 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send response
+	// Build and send response (domain only, not API key)
 	user := os.Getenv("USER")
 	response := &pairing.PairData{
 		Hostname:  hostname,
 		PublicKey: pubKey,
 		User:      user,
 	}
-	if err := pairing.SendResponse(req.Code, response); err != nil {
-		jsonError(w, "cannot send response", 500)
+
+	configMu.Lock()
+	cfg, err := config.Load()
+	if err == nil && cfg.Cloudflare.Domain != "" {
+		response.CFDomain = cfg.Cloudflare.Domain
+	}
+	configMu.Unlock()
+
+	session := &pairing.PairSession{PairID: pairID, Token: token, Code: code}
+	if err := pairing.SendResponse(session, response); err != nil {
+		jsonError(w, err.Error(), 500)
 		return
 	}
 
 	// Add server's key locally
-	pairing.AddAuthorizedKey(serverData.PublicKey)
+	if err := pairing.AddAuthorizedKey(serverData.PublicKey); err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
 
 	// Add machine to config
+	tunnel := ""
+	if cfg != nil && cfg.Cloudflare.Domain != "" {
+		tunnel = serverData.Hostname + "." + cfg.Cloudflare.Domain
+	}
+
 	configMu.Lock()
 	defer configMu.Unlock()
 
-	cfg, err := config.Load()
+	cfg, err = config.Load()
 	if err != nil {
 		jsonError(w, "internal", 500)
 		return
@@ -782,7 +812,7 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 	cfg.Machines[serverData.Hostname] = config.Machine{
 		IP:       serverData.IP,
 		User:     serverData.User,
-		Tunnel:   serverData.Tunnel,
+		Tunnel:   tunnel,
 		Services: make(map[string]config.MachineService),
 	}
 

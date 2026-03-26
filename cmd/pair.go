@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	cf "github.com/meumeu-dev/hop/internal/cloudflared"
@@ -13,10 +14,13 @@ import (
 )
 
 var pairCmd = &cobra.Command{
-	Use:   "pair [code]",
+	Use:   "pair [token]",
 	Short: "Appaire cette machine avec un autre hop",
 	Long: `Sans argument: met cette machine en attente de pairing (mode serveur).
-Avec un code: se connecte à la machine en attente (mode client).`,
+Avec un token: se connecte à la machine en attente (mode client).
+
+Le token est affiché par 'hop pair' sur l'autre machine.
+Format: <pair_id>.<code>.<token>`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
@@ -30,25 +34,25 @@ Avec un code: se connecte à la machine en attente (mode client).`,
 func runPairServer() {
 	hostname, _ := os.Hostname()
 
-	// Ensure SSH key exists
+	if err := config.ValidateName(hostname); err != nil {
+		fmt.Fprintf(os.Stderr, "Hostname invalide: %v\n", err)
+		os.Exit(1)
+	}
+
 	_, pubKey, err := pairing.EnsureSSHKey()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur génération clé SSH: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Detect local IP
 	localIP := detectLocalIP()
-
 	user := os.Getenv("USER")
 	if user == "" {
 		user = "unknown"
 	}
 
-	// Generate code
 	code := pairing.GenerateCode()
 
-	// Build pair data (server doesn't send CF config, it receives it)
 	data := &pairing.PairData{
 		Hostname:  hostname,
 		IP:        localIP,
@@ -56,32 +60,35 @@ func runPairServer() {
 		PublicKey: pubKey,
 	}
 
-	// Publish encrypted data
 	fmt.Println("→ Enregistrement sur le serveur de pairing...")
-	if err := pairing.PublishPairData(code, data); err != nil {
+	session, err := pairing.PublishPairData(code, data)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 		os.Exit(1)
 	}
+	defer pairing.Cleanup(session)
+
+	// Pair token = pairID.code.token (all needed by the client)
+	pairToken := session.PairID + "." + code + "." + session.Token
 
 	fmt.Println()
-	fmt.Println("╔══════════════════════════════╗")
-	fmt.Printf("║  Code de pairing: %s     ║\n", code)
-	fmt.Println("╠══════════════════════════════╣")
-	fmt.Println("║  Sur l'autre PC, tape:       ║")
-	fmt.Printf("║  hop pair %s              ║\n", code)
-	fmt.Println("╚══════════════════════════════╝")
+	fmt.Println("╔══════════════════════════════════════╗")
+	fmt.Println("║  Sur l'autre PC, tape:                ║")
+	fmt.Println("║                                       ║")
+	fmt.Printf("║  hop pair %s...  ║\n", pairToken[:25])
+	fmt.Println("╚══════════════════════════════════════╝")
+	fmt.Println()
+	fmt.Println("Token complet:")
+	fmt.Println(pairToken)
 	fmt.Println()
 	fmt.Println("En attente de connexion... (expire dans 5 min)")
 
-	// Wait for response from PC principal
-	response, err := pairing.WaitForResponse(code, 5*time.Minute)
+	response, err := pairing.WaitForResponse(session, 5*time.Minute)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
-		pairing.Cleanup(code)
 		os.Exit(1)
 	}
 
-	// Add the PC's public key to authorized_keys
 	if err := pairing.AddAuthorizedKey(response.PublicKey); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur ajout clé SSH: %v\n", err)
 		os.Exit(1)
@@ -89,81 +96,84 @@ func runPairServer() {
 
 	fmt.Println()
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", response.Hostname)
-	fmt.Printf("→ Clé SSH ajoutée\n")
+	fmt.Println("→ Clé SSH ajoutée")
 
-	// Apply CF config if received
+	// Apply CF domain if received
 	if response.CFDomain != "" {
-		fmt.Println()
-		fmt.Println("→ Configuration Cloudflare reçue...")
-		if err := pairing.ApplyCFConfig(response.CFDomain, response.CFEmail, response.CFAPIKey); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur config CF: %v\n", err)
-		} else {
-			fmt.Printf("→ Domaine: %s\n", response.CFDomain)
-
-			// Auto tunnel setup
-			fmt.Println()
-			fmt.Println("→ Configuration du tunnel Cloudflare...")
-			setupTunnelAuto(hostname, response.CFDomain, response.CFEmail, response.CFAPIKey)
-		}
+		fmt.Printf("→ Domaine Cloudflare: %s\n", response.CFDomain)
+		pairing.ApplyCFConfig(response.CFDomain)
 	}
 
-	pairing.Cleanup(code)
 	fmt.Println()
 	fmt.Println("→ Cette machine est prête !")
+	fmt.Println()
+	fmt.Println("Le PC principal va maintenant transférer les identifiants")
+	fmt.Println("Cloudflare via SSH et configurer le tunnel automatiquement.")
 }
 
-func runPairClient(code string) {
+func runPairClient(pairToken string) {
+	// Parse: pairID.code.token
+	parts := strings.SplitN(pairToken, ".", 3)
+	if len(parts) != 3 {
+		fmt.Fprintln(os.Stderr, "Token invalide. Copie le token complet affiché par 'hop pair'.")
+		os.Exit(1)
+	}
+
+	pairID := parts[0]
+	code := parts[1]
+	token := parts[2]
+
 	hostname, _ := os.Hostname()
 
-	// Ensure SSH key exists
 	_, pubKey, err := pairing.EnsureSSHKey()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur génération clé SSH: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Fetch and decrypt the server's data
 	fmt.Println("→ Récupération des données de pairing...")
-	serverData, err := pairing.FetchPairData(code)
+	serverData, err := pairing.FetchPairData(pairID, code)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("→ Machine trouvée: %s (%s@%s)\n", serverData.Hostname, serverData.User, serverData.IP)
-
-	// Load CF credentials to send to the server
-	cfg, _ := config.Load()
-	cfEmail, cfAPIKey := pairing.LoadCFCredentials()
-
-	// Build response with SSH key + CF config
-	user := os.Getenv("USER")
-	response := &pairing.PairData{
-		Hostname: hostname,
-		PublicKey: pubKey,
-		User:     user,
-	}
-
-	// Include CF config if available
-	if cfg != nil && cfg.Cloudflare.Domain != "" && cfAPIKey != "" {
-		response.CFDomain = cfg.Cloudflare.Domain
-		response.CFEmail = cfEmail
-		response.CFAPIKey = cfAPIKey
-		fmt.Printf("→ Envoi config Cloudflare (%s)\n", cfg.Cloudflare.Domain)
-	}
-
-	if err := pairing.SendResponse(code, response); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur envoi réponse: %v\n", err)
+	if err := config.ValidateName(serverData.Hostname); err != nil {
+		fmt.Fprintf(os.Stderr, "Hostname distant invalide: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Add the server's public key to authorized_keys
+	fmt.Printf("→ Machine trouvée: %s (%s@%s)\n", serverData.Hostname, serverData.User, serverData.IP)
+
+	cfg, _ := config.Load()
+
+	user := os.Getenv("USER")
+	response := &pairing.PairData{
+		Hostname:  hostname,
+		PublicKey: pubKey,
+		User:      user,
+	}
+	if cfg != nil && cfg.Cloudflare.Domain != "" {
+		response.CFDomain = cfg.Cloudflare.Domain
+	}
+
+	session := &pairing.PairSession{
+		PairID: pairID,
+		Token:  token,
+		Code:   code,
+	}
+
+	if err := pairing.SendResponse(session, response); err != nil {
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := pairing.AddAuthorizedKey(serverData.PublicKey); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur ajout clé SSH: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Add machine to config with auto tunnel hostname
+	// Add machine to config
 	tunnel := ""
 	if cfg != nil && cfg.Cloudflare.Domain != "" {
 		tunnel = serverData.Hostname + "." + cfg.Cloudflare.Domain
@@ -175,11 +185,7 @@ func runPairClient(code string) {
 		Tunnel:   tunnel,
 		Services: make(map[string]config.MachineService),
 	}
-
-	if err := cfg.Save(); err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
-	}
+	cfg.Save()
 
 	fmt.Println()
 	fmt.Printf("→ Pairing réussi avec '%s' !\n", serverData.Hostname)
@@ -188,21 +194,56 @@ func runPairClient(code string) {
 		fmt.Printf(", tunnel: %s", tunnel)
 	}
 	fmt.Println(")")
-	fmt.Printf("→ Tu peux maintenant faire: hop ssh %s\n", serverData.Hostname)
+
+	// Transfer CF credentials via SSH and setup tunnel
+	if cfg.Cloudflare.Domain != "" {
+		cfEmail, cfAPIKey := pairing.LoadCFCredentials()
+		if cfAPIKey != "" {
+			fmt.Println()
+			fmt.Println("→ Transfert des identifiants Cloudflare via SSH...")
+			transferAndSetupTunnel(serverData, cfg.Cloudflare.Domain, cfEmail, cfAPIKey)
+		}
+	}
+
+	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", serverData.Hostname)
+}
+
+func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKey string) {
+	target := server.User + "@" + server.IP
+	hopKeyPath := config.HopDir() + "/keys/hop_ed25519"
+
+	// Transfer CF env file via SSH using hop's key
+	envContent := pairing.BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain)
+	remoteCmd := fmt.Sprintf("mkdir -p ~/.hop && printf '%%s' '%s' > ~/.hop/cloudflare.env && chmod 600 ~/.hop/cloudflare.env",
+		strings.ReplaceAll(envContent, "'", "'\\''"))
+
+	fmt.Printf("  → Envoi vers %s...\n", target)
+	sshCmd := exec.Command("ssh", "-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new", target, "--", "bash", "-c", remoteCmd)
+	sshCmd.Stdout = os.Stdout
+	sshCmd.Stderr = os.Stderr
+	if err := sshCmd.Run(); err != nil {
+		fmt.Printf("  → Erreur SSH: %v\n", err)
+		fmt.Println("  → Tu peux transférer manuellement avec: hop tunnel setup")
+		return
+	}
+
+	// Update remote hop config to point to the env file
+	configCmd := fmt.Sprintf("hop add service ssh --cmd ssh 2>/dev/null; true")
+	_ = configCmd
+
+	fmt.Println("  → Identifiants transférés !")
+	fmt.Println()
+	fmt.Printf("  → Pour finaliser, lance sur %s:\n", server.Hostname)
+	fmt.Printf("    hop tunnel setup %s\n", server.Hostname)
 }
 
 func detectLocalIP() string {
-	// Try to find the local IP by dialing a public address (no actual connection)
 	conn, err := exec.Command("hostname", "-I").Output()
 	if err == nil {
-		parts := fmt.Sprintf("%s", conn)
-		ips := fmt.Sprintf("%s", parts)
-		if len(ips) > 0 {
-			// Take first IP
-			for _, ip := range splitSpaces(ips) {
-				if ip != "" && ip != "127.0.0.1" {
-					return ip
-				}
+		ips := splitSpaces(string(conn))
+		for _, ip := range ips {
+			if ip != "" && ip != "127.0.0.1" {
+				return ip
 			}
 		}
 	}
@@ -235,92 +276,61 @@ func setupTunnelAuto(hostname, cfDomain, cfEmail, cfAPIKey string) {
 		return
 	}
 
-	// Set env for cloudflared
 	os.Setenv("CLOUDFLARE_API_KEY", cfAPIKey)
 	os.Setenv("CLOUDFLARE_EMAIL", cfEmail)
 
-	// Login
 	fmt.Println("  → Authentification Cloudflare...")
 	loginCmd := exec.Command(cfPath, "tunnel", "login")
 	loginCmd.Stdin = os.Stdin
 	loginCmd.Stdout = os.Stdout
 	loginCmd.Stderr = os.Stderr
 	if err := loginCmd.Run(); err != nil {
-		fmt.Println("  → Login échoué, tu peux le faire plus tard avec: hop tunnel setup")
+		fmt.Println("  → Login échoué, lance: hop tunnel setup")
 		return
 	}
 
-	// Create tunnel
 	tunnelName := hostname
 	fmt.Printf("  → Création du tunnel '%s'...\n", tunnelName)
-	createCmd := exec.Command(cfPath, "tunnel", "create", tunnelName)
-	createCmd.Stdout = os.Stdout
-	createCmd.Stderr = os.Stderr
-	createCmd.Run() // ignore error if already exists
+	exec.Command(cfPath, "tunnel", "create", "--", tunnelName).Run()
 
-	// Route DNS
 	tunnelHostname := hostname + "." + cfDomain
 	fmt.Printf("  → Route DNS %s...\n", tunnelHostname)
-	routeCmd := exec.Command(cfPath, "tunnel", "route", "dns", tunnelName, tunnelHostname)
-	routeCmd.Stdout = os.Stdout
-	routeCmd.Stderr = os.Stderr
-	routeCmd.Run()
+	exec.Command(cfPath, "tunnel", "route", "dns", "--", tunnelName, tunnelHostname).Run()
 
-	// Generate config
 	cfConfigDir := os.ExpandEnv("$HOME/.cloudflared")
 	cfConfigPath := cfConfigDir + "/config.yml"
 
-	listCmd := exec.Command(cfPath, "tunnel", "list", "-o", "json")
-	listOut, err := listCmd.Output()
+	listOut, err := exec.Command(cfPath, "tunnel", "list", "-o", "json").Output()
 	if err == nil {
-		// Extract tunnel ID
-		tunnelID := ""
-		lines := fmt.Sprintf("%s", listOut)
-		parts := splitByQuotes(lines)
-		for i, part := range parts {
-			if part == "id" && i+2 < len(parts) {
-				tunnelID = parts[i+2]
-				break
-			}
-		}
-
+		tunnelID := extractTunnelID(string(listOut))
 		if tunnelID != "" {
 			cfConfig := fmt.Sprintf("tunnel: %s\ncredentials-file: %s/%s.json\n\ningress:\n  - hostname: %s\n    service: ssh://localhost:22\n  - service: http_status:404\n",
 				tunnelID, cfConfigDir, tunnelID, tunnelHostname)
 			os.WriteFile(cfConfigPath, []byte(cfConfig), 0600)
-			fmt.Printf("  → Config écrite: %s\n", cfConfigPath)
+			fmt.Printf("  → Config: %s\n", cfConfigPath)
 		}
 	}
 
-	// Install as service
-	fmt.Println("  → Installation du service systemd...")
+	fmt.Println("  → Installation service systemd...")
 	serviceCmd := exec.Command("sudo", cfPath, "service", "install")
 	serviceCmd.Stdin = os.Stdin
 	serviceCmd.Stdout = os.Stdout
 	serviceCmd.Stderr = os.Stderr
 	if err := serviceCmd.Run(); err != nil {
-		fmt.Printf("  → Service non installé. Lance manuellement: %s tunnel run %s\n", cfPath, tunnelName)
+		fmt.Printf("  → Lance manuellement: %s tunnel run %s\n", cfPath, tunnelName)
 	} else {
 		fmt.Println("  → Tunnel actif !")
 	}
 }
 
-func splitByQuotes(s string) []string {
-	var result []string
-	current := ""
-	inQuote := false
-	for _, c := range s {
-		if c == '"' {
-			if inQuote {
-				result = append(result, current)
-				current = ""
-			}
-			inQuote = !inQuote
-		} else if inQuote {
-			current += string(c)
+func extractTunnelID(jsonOutput string) string {
+	parts := strings.Split(jsonOutput, "\"")
+	for i, part := range parts {
+		if part == "id" && i+2 < len(parts) {
+			return parts[i+2]
 		}
 	}
-	return result
+	return ""
 }
 
 func init() {
