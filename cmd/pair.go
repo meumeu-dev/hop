@@ -81,15 +81,14 @@ func runPairServer() {
 
 	pairToken := session.PairID + "." + code + "." + session.Token
 
-	// Try to copy to clipboard
+	fmt.Println()
+	fmt.Println("Sur l'autre machine, lance:")
+	fmt.Printf("  hop pair %s\n", pairToken)
+
+	// Try to copy to clipboard too
 	if err := copyToClipboard(pairToken); err == nil {
 		fmt.Println()
-		fmt.Println("→ Token copié dans le presse-papier !")
-		fmt.Println("  Sur l'autre PC: hop pair <coller>")
-	} else {
-		fmt.Println()
-		fmt.Println("Token (copie-le sur l'autre PC):")
-		fmt.Println(pairToken)
+		fmt.Println("(aussi copie dans le presse-papier)")
 	}
 	fmt.Println()
 	fmt.Println("En attente de connexion... (expire dans 2 min)")
