@@ -23,6 +23,19 @@ var addMachineCmd = &cobra.Command{
 		ip := args[1]
 		user, _ := cmd.Flags().GetString("user")
 		tunnel, _ := cmd.Flags().GetString("tunnel")
+		enableTunnel, _ := cmd.Flags().GetBool("enable-tunnel")
+
+		// Auto-generate tunnel hostname from domain if --tunnel is empty but --enable-tunnel is set
+		if tunnel == "" && enableTunnel {
+			cfg, err := config.Load()
+			if err == nil && cfg.Cloudflare.Domain != "" {
+				tunnel = name + "." + cfg.Cloudflare.Domain
+				fmt.Printf("→ Tunnel auto: %s\n", tunnel)
+			} else {
+				fmt.Fprintln(os.Stderr, "Domaine Cloudflare non configuré. Lance 'hop init' ou 'hop dashboard' d'abord.")
+				os.Exit(1)
+			}
+		}
 
 		if err := config.ValidateName(name); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
@@ -175,6 +188,7 @@ var addMachineServiceCmd = &cobra.Command{
 func init() {
 	addMachineCmd.Flags().String("user", "", "Utilisateur SSH")
 	addMachineCmd.Flags().String("tunnel", "", "Hostname Cloudflare Tunnel")
+	addMachineCmd.Flags().Bool("enable-tunnel", false, "Active le tunnel (hostname auto-généré depuis le domaine)")
 	addMachineCmd.MarkFlagRequired("user")
 
 	addServiceCmd.Flags().String("cmd", "", "Commande à exécuter")

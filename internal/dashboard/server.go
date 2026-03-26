@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"os"
 	"net/http"
 	"os/exec"
 	"runtime"
@@ -160,6 +161,7 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/services/", handleServiceDelete)
 	mux.HandleFunc("/api/remotes", handleRemotes)
 	mux.HandleFunc("/api/remotes/", handleRemoteRoute)
+	mux.HandleFunc("/api/cloudflare", handleCloudflare)
 }
 
 func Start(port int, open bool) error {
@@ -652,4 +654,68 @@ func handleRemoteConfig(w http.ResponseWriter, r *http.Request, name string) {
 
 	w.Header().Set("Content-Type", "application/json")
 	io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+}
+
+type cloudflareReq struct {
+	Domain string `json:"domain"`
+	Email  string `json:"email"`
+	APIKey string `json:"api_key"`
+}
+
+func handleCloudflare(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		configMu.Lock()
+		cfg, err := config.Load()
+		configMu.Unlock()
+		if err != nil {
+			jsonError(w, "internal", 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"domain": cfg.Cloudflare.Domain,
+		})
+		return
+	}
+
+	if r.Method != "POST" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	limitBody(r)
+
+	var req cloudflareReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad request", 400)
+		return
+	}
+
+	configMu.Lock()
+	defer configMu.Unlock()
+
+	cfg, err := config.Load()
+	if err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	// Write env file
+	envPath := config.ExpandPath("~/.hop/cloudflare.env")
+	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", req.Email, req.Domain, req.APIKey)
+	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+		jsonError(w, "cannot write env file", 500)
+		return
+	}
+
+	cfg.Cloudflare = config.CloudflareConfig{
+		Domain:  req.Domain,
+		EnvFile: "~/.hop/cloudflare.env",
+	}
+
+	if err := cfg.Save(); err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	jsonOK(w)
 }
