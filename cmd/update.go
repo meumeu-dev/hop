@@ -41,10 +41,10 @@ var updateCmd = &cobra.Command{
 		// Show changelog
 		if changelog != "" {
 			fmt.Println()
-			fmt.Println("Changelog:")
 			fmt.Println(formatChangelog(changelog))
+		} else {
+			fmt.Printf("\nhttps://github.com/meumeu-dev/hop/releases/tag/%s\n", latest)
 		}
-		fmt.Printf("\nhttps://github.com/meumeu-dev/hop/releases/tag/%s\n", latest)
 
 		// Ask confirmation unless -y
 		if !updateForce {
