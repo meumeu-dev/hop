@@ -59,4 +59,6 @@ fi
 
 echo "→ hop $LATEST installe dans $INSTALL_DIR/hop"
 echo ""
+echo "Si 'hop' ne fonctionne pas: hash -r ou ouvrez un nouveau terminal"
+echo ""
 echo "Demarrage: hop config"
