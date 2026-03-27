@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
@@ -22,6 +24,26 @@ hop install copie la config dans ~/.hop/ et la rend persistante.`,
 			fmt.Println("hop est deja installe.")
 			fmt.Printf("Config: %s\n", permanentDir)
 			return
+		}
+
+		// Detect legacy install (old ~/.hop/ without .installed marker)
+		legacyConfig := filepath.Join(permanentDir, "config.yml")
+		legacyMarker := filepath.Join(permanentDir, ".installed")
+		if _, err := os.Stat(legacyConfig); err == nil {
+			if _, err := os.Stat(legacyMarker); os.IsNotExist(err) {
+				fmt.Println("⚠ Ancienne installation detectee dans ~/.hop/")
+				fmt.Println("  Elle sera supprimee et remplacee par la config sandbox actuelle.")
+				reader := bufio.NewReader(os.Stdin)
+				fmt.Print("Continuer ? [o/N]: ")
+				confirm, _ := reader.ReadString('\n')
+				confirm = strings.TrimSpace(strings.ToLower(confirm))
+				if confirm != "o" && confirm != "oui" && confirm != "y" && confirm != "yes" {
+					fmt.Println("Annule.")
+					return
+				}
+				os.RemoveAll(permanentDir)
+				fmt.Println("→ Ancienne config supprimee.")
+			}
 		}
 
 		// Create permanent dir
