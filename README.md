@@ -2,7 +2,7 @@
 
 > **Beta** — en cours de dev. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
 
-Un seul binaire pour gerer toutes tes machines. SSH, pairing chiffre E2E, tunnels Cloudflare.
+Un seul binaire pour gerer toutes tes machines. **Sandboxe par defaut** — zero trace au reboot. SSH, pairing chiffre E2E, tunnels Cloudflare.
 
 ## Installation
 

@@ -189,7 +189,7 @@
                 </svg>
             </div>
             <h1>hop <span id="ver" style="font-size:0.5em;font-weight:400;color:#6c5ce7"></span> <span class="badge">Beta</span></h1>
-            <p>Un seul binaire pour gerer toutes tes machines. SSH, services, tunnels Cloudflare, pairing zero-config. Lance n'importe quoi, n'importe ou.</p>
+            <p>Un seul binaire pour gerer toutes tes machines. Sandboxe par defaut — zero trace au reboot. SSH, tunnels, pairing chiffre E2E.</p>
         </div>
 
         <div class="install-section">
@@ -210,34 +210,34 @@
             <h2>Features</h2>
             <div class="feat-grid">
                 <div class="feat">
+                    <div class="feat-icon">&#128683;</div>
+                    <strong>Sandbox par defaut</strong>
+                    <p>Config dans /tmp, disparait au reboot. <code>hop exit</code> = zero trace. <code>hop install</code> pour rendre permanent.</p>
+                </div>
+                <div class="feat">
                     <div class="feat-icon">&#128279;</div>
                     <strong>Pairing chiffre E2E</strong>
-                    <p>LAN direct (UDP) ou relay Cloudflare Worker. Chiffrement AES-GCM + Argon2id. Worker custom possible.</p>
+                    <p>LAN direct ou relay Cloudflare. AES-GCM + Argon2id. Le relay ne voit jamais tes donnees.</p>
                 </div>
                 <div class="feat">
                     <div class="feat-icon">&#128268;</div>
                     <strong>SSH intelligent</strong>
-                    <p>Auto-detecte LAN ou Cloudflare Tunnel. Toujours le chemin le plus rapide.</p>
+                    <p>Auto-detecte LAN ou tunnel Cloudflare. Toujours le chemin le plus rapide.</p>
                 </div>
                 <div class="feat">
                     <div class="feat-icon">&#127760;</div>
                     <strong>Cloudflare Tunnels</strong>
-                    <p>Tunnel permanent avec DNS auto. Acces distant sans ouvrir de port. Compte CF gratuit.</p>
-                </div>
-                <div class="feat">
-                    <div class="feat-icon">&#128421;</div>
-                    <strong>Export / Import</strong>
-                    <p>Backup chiffre AES-GCM. Fichier local ou upload cloud temporaire. Restaure en une commande.</p>
+                    <p>Acces distant sans ouvrir de port. Foreground par defaut, service systemd avec <code>hop install</code>.</p>
                 </div>
                 <div class="feat">
                     <div class="feat-icon">&#9889;</div>
-                    <strong>Services &amp; Tmux</strong>
-                    <p>Commandes reutilisables, aliases, rename, lance-les sur n'importe quelle machine.</p>
+                    <strong>Services &amp; Config</strong>
+                    <p>Commandes reutilisables, aliases. Export/import chiffre. <code>hop config cf</code> pour tout configurer.</p>
                 </div>
                 <div class="feat">
                     <div class="feat-icon">&#129529;</div>
                     <strong>Tiny &amp; portable</strong>
-                    <p>Binaire unique ~12MB, zero dependances. Self-update avec checksum SHA256, autocompletion.</p>
+                    <p>Binaire unique, zero dependances. Self-update + checksum SHA256. Autocompletion bash/zsh/fish.</p>
                 </div>
             </div>
         </div>
@@ -256,14 +256,21 @@
                     <div class="step-num">2</div>
                     <div class="step-text">
                         <strong>Pairer une machine</strong>
-                        <p>Sur le PC: <code>hop pair</code> — sur la nouvelle machine: <code>hop pair &lt;token&gt;</code></p>
+                        <p><code>hop pair</code> — sur l'autre: <code>hop pair &lt;token&gt;</code></p>
                     </div>
                 </div>
                 <div class="step">
                     <div class="step-num">3</div>
                     <div class="step-text">
                         <strong>Se connecter</strong>
-                        <p><code>hop ssh rpi</code> — c'est tout, les cles et tunnels sont deja configures.</p>
+                        <p><code>hop ssh rpi</code> — mode sandbox, zero trace au reboot</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">4</div>
+                    <div class="step-text">
+                        <strong>Garder ou quitter</strong>
+                        <p><code>hop install</code> pour rendre permanent — ou <code>hop exit</code> pour tout effacer</p>
                     </div>
                 </div>
             </div>
