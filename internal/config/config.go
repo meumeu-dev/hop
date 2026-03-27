@@ -136,9 +136,12 @@ func ConfigPath() string {
 }
 
 func ExpandPath(path string) string {
-	if strings.HasPrefix(path, "~") {
+	if path == "~" {
 		home, _ := os.UserHomeDir()
-		path = home + path[1:]
+		path = home
+	} else if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, path[2:])
 	}
 	cleaned := filepath.Clean(path)
 	// Ensure it stays within home directory

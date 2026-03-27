@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	cf "github.com/meumeu-dev/hop/internal/cloudflared"
@@ -93,8 +94,9 @@ var tunnelSetupCmd = &cobra.Command{
 
 		// Step 4: Generate config
 		fmt.Println("\n→ Etape 4: Generation de la config cloudflared")
-		cfConfigDir := os.ExpandEnv("$HOME/.cloudflared")
-		cfConfigPath := cfConfigDir + "/config.yml"
+		home, _ := os.UserHomeDir()
+		cfConfigDir := filepath.Join(home, ".cloudflared")
+		cfConfigPath := filepath.Join(cfConfigDir, "config.yml")
 
 		listCmd := exec.Command(cfPath, "tunnel", "list", "-o", "json")
 		listOut, err := listCmd.Output()

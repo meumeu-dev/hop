@@ -68,8 +68,12 @@ func copyDir(src, dst string) {
 	os.MkdirAll(dst, 0700)
 	entries, _ := os.ReadDir(src)
 	for _, entry := range entries {
-		s := src + "/" + entry.Name()
-		d := dst + "/" + entry.Name()
+		s := filepath.Join(src, entry.Name())
+		d := filepath.Join(dst, entry.Name())
+		// Skip symlinks
+		if fi, err := os.Lstat(s); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		if entry.IsDir() {
 			copyDir(s, d)
 		} else {
