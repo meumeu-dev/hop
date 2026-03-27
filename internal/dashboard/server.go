@@ -126,8 +126,8 @@ func dashboardAuthMiddleware(token string, next http.Handler) http.Handler {
 	})
 }
 
-func limitBody(r *http.Request) {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
+func limitBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 }
 
 func registerAPIRoutes(mux *http.ServeMux) {
@@ -256,7 +256,7 @@ func handleMachines(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", 405)
 		return
 	}
-	limitBody(r)
+	limitBody(w, r)
 
 	var req machineReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -347,7 +347,7 @@ func handleServices(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", 405)
 		return
 	}
-	limitBody(r)
+	limitBody(w, r)
 
 	var req serviceReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -449,7 +449,7 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", 405)
 		return
 	}
-	limitBody(r)
+	limitBody(w, r)
 
 	var req cloudflareReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -496,7 +496,7 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "method not allowed", 405)
 		return
 	}
-	limitBody(r)
+	limitBody(w, r)
 
 	var req pairReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

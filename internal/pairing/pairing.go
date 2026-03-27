@@ -24,17 +24,8 @@ import (
 
 const DefaultWorkerURL = "https://hop-pair.meumeudev.workers.dev"
 
-func getHopDir() string {
-	home, _ := os.UserHomeDir()
-	installedDir := filepath.Join(home, ".hop")
-	if _, err := os.Stat(filepath.Join(installedDir, ".installed")); err == nil {
-		return installedDir
-	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("hop-%d", os.Getuid()))
-}
-
 func GetWorkerURL() string {
-	configPath := filepath.Join(getHopDir(), "config.yml")
+	configPath := config.ConfigPath()
 	data, err := os.ReadFile(configPath)
 	if err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
