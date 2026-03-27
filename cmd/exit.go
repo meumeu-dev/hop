@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
@@ -10,8 +11,8 @@ import (
 
 var exitCmd = &cobra.Command{
 	Use:   "exit",
-	Short: "Supprime toute trace de hop (mode sandbox)",
-	Long: `Supprime le dossier de config temporaire. Zero trace sur le systeme.
+	Short: "Supprime toute trace de hop (config + binaire)",
+	Long: `Supprime la config, les cles, et le binaire hop. Zero trace sur le systeme.
 En mode installe (hop install), utilise hop uninstall a la place.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if config.IsInstalled() {
@@ -20,18 +21,25 @@ En mode installe (hop install), utilise hop uninstall a la place.`,
 			os.Exit(1)
 		}
 
+		// Remove config
 		hopDir := config.HopDir()
-		if _, err := os.Stat(hopDir); os.IsNotExist(err) {
-			fmt.Println("Rien a nettoyer.")
-			return
+		if _, err := os.Stat(hopDir); err == nil {
+			os.RemoveAll(hopDir)
 		}
 
-		if err := os.RemoveAll(hopDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-			os.Exit(1)
+		// Remove binary
+		execPath, _ := os.Executable()
+		if err := os.Remove(execPath); err != nil {
+			if os.IsPermission(err) {
+				sudoCmd := exec.Command("sudo", "rm", execPath)
+				sudoCmd.Stdin = os.Stdin
+				sudoCmd.Stdout = os.Stdout
+				sudoCmd.Stderr = os.Stderr
+				sudoCmd.Run()
+			}
 		}
 
-		fmt.Println("→ hop nettoye. Zero trace.")
+		fmt.Println("→ hop supprime. Zero trace.")
 	},
 }
 
