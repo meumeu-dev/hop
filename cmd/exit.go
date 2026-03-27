@@ -29,17 +29,27 @@ En mode installe (hop install), utilise hop uninstall a la place.`,
 
 		// Remove binary
 		execPath, _ := os.Executable()
+		binRemoved := false
 		if err := os.Remove(execPath); err != nil {
 			if os.IsPermission(err) {
 				sudoCmd := exec.Command("sudo", "rm", execPath)
 				sudoCmd.Stdin = os.Stdin
 				sudoCmd.Stdout = os.Stdout
 				sudoCmd.Stderr = os.Stderr
-				sudoCmd.Run()
+				if sudoCmd.Run() == nil {
+					binRemoved = true
+				}
 			}
+		} else {
+			binRemoved = true
 		}
 
-		fmt.Println("→ hop supprime. Zero trace.")
+		if binRemoved {
+			fmt.Println("→ hop supprime. Zero trace.")
+		} else {
+			fmt.Println("→ Config supprimee. Binaire encore present.")
+			fmt.Fprintf(os.Stderr, "  sudo rm %s pour finir\n", execPath)
+		}
 	},
 }
 

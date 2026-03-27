@@ -242,7 +242,8 @@ func PublishPairData(code string, data *PairData) (*PairSession, error) {
 		return nil, err
 	}
 
-	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
+	bodyJSON, _ := json.Marshal(map[string]string{"data": encrypted})
+	body := string(bodyJSON)
 	resp, err := httpClient.Post(GetWorkerURL()+"/pair", "application/json", strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
@@ -312,7 +313,8 @@ func SendResponse(session *PairSession, data *PairData) error {
 		return err
 	}
 
-	body := fmt.Sprintf(`{"data":"%s"}`, encrypted)
+	bodyJSON, _ := json.Marshal(map[string]string{"data": encrypted})
+	body := string(bodyJSON)
 	req, err := http.NewRequest("POST", GetWorkerURL()+"/pair/"+session.PairID+"/response", strings.NewReader(body))
 	if err != nil {
 		return err

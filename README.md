@@ -1,19 +1,19 @@
 # hop
 
-> **Beta** — en cours de dev. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
+> **Beta** — Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
 
 Un seul binaire pour gerer toutes tes machines. **Sandboxe par defaut** — zero trace au reboot. SSH, pairing chiffre E2E, tunnels Cloudflare.
 
 ## Installation
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | bash
+curl -sL meumeu.dev/hop/install | bash
 ```
 
 ## Demarrage rapide
 
 ```bash
-hop init                  # configure hop (mode sandbox par defaut)
+hop init                  # configure hop (sandbox par defaut)
 
 hop pair                  # machine A — affiche un token
 hop pair <token>          # machine B — se connecte
@@ -21,7 +21,7 @@ hop pair <token>          # machine B — se connecte
 hop ssh rpi               # SSH (auto LAN ou tunnel)
 
 hop install               # rend permanent (survit au reboot)
-hop exit                  # supprime toute trace (mode sandbox)
+hop exit                  # supprime toute trace (furtif)
 ```
 
 ## Sandbox vs Installe
@@ -33,57 +33,85 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | Config | `/tmp/hop-<uid>/` | `~/.hop/` |
 | Reboot | Config perdue | Config persistante |
 | Tunnel | Foreground | Service systemd |
-| Nettoyage | `hop exit` (zero trace) | `hop uninstall` |
+| Nettoyage | `hop exit` (zero trace) | `hop uninstall` (nucleaire) |
 
 ## Commandes
 
+### Connexion
 | Commande | Description |
 |----------|-------------|
-| `hop <service> [machine]` | Lance un service |
-| `hop pair` | Pairing securise (auto/lan/relay) |
-| `hop ssh <machine>` | Connexion SSH (LAN/tunnel) |
-| `hop ping [machine]` | Status des machines |
-| `hop list` | Liste tout |
-| `hop add machine/service` | Ajoute |
-| `hop remove/rename/alias` | Gestion |
+| `hop <service> [machine]` | Lance un service (local ou distant) |
+| `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
+| `hop ping [machine]` | Verifie l'etat des machines |
+| `hop list` | Liste machines, services, aliases |
+
+### Pairing
+| Commande | Description |
+|----------|-------------|
+| `hop pair` | Pairing securise (menu: auto/lan/relay) |
+| `hop pair -m lan` | LAN uniquement (broadcast UDP) |
+| `hop pair -m relay` | Relay worker uniquement |
+
+### Gestion
+| Commande | Description |
+|----------|-------------|
+| `hop add machine <nom> <ip> --user <user>` | Ajoute une machine |
+| `hop add service <nom> --cmd <cmd>` | Ajoute un service |
+| `hop remove <nom>` | Supprime machine ou service |
+| `hop rename <ancien> <nouveau>` | Renomme |
+| `hop alias add <alias> <cible>` | Cree un raccourci |
+| `hop alias list` | Liste les alias |
+
+### Cloudflare
+| Commande | Description |
+|----------|-------------|
 | `hop config cf` | Configure Cloudflare (domaine + token) |
-| `hop config show` | Affiche la config |
-| `hop tunnel setup` | Tunnel Cloudflare permanent |
-| `hop dashboard` | Interface web |
-| `hop export [--cloud]` | Backup config chiffre |
-| `hop import <source>` | Restaure config |
-| `hop worker url [url]` | Configure worker custom |
-| `hop update [-y]` | Mise a jour + checksum SHA256 |
-| `hop install` | Rend permanent (survit au reboot) |
-| `hop exit` | Supprime toute trace (sandbox) |
-| `hop reset/uninstall` | Cleanup |
-| `hop completion` | Autocompletion |
+| `hop config cf --env <fichier-ou-url>` | Importe un .env CF |
+| `hop config show` | Affiche la config actuelle |
+| `hop tunnel setup` | Cree un tunnel Cloudflare permanent |
+| `hop tunnel status` | Status des tunnels |
+| `hop worker url [url]` | Configure un worker custom |
 
-## Cloudflare
+### Sauvegarde
+| Commande | Description |
+|----------|-------------|
+| `hop export` | Backup config chiffre (fichier local) |
+| `hop export --cloud` | Backup chiffre sur le worker (lien 2min) |
+| `hop import <fichier-ou-token>` | Restaure config |
 
-```bash
-hop config cf             # configure domaine + token API en une fois
-hop tunnel setup          # cree un tunnel permanent + systemd
-```
-
-Necessite un compte Cloudflare (gratuit) + un domaine. `hop init` propose de configurer CF au demarrage.
+### Systeme
+| Commande | Description |
+|----------|-------------|
+| `hop init` | Configure hop (sandbox par defaut) |
+| `hop install` | Rend permanent (~/.hop/, survit au reboot) |
+| `hop exit` | Furtif: supprime config + binaire, zero trace |
+| `hop uninstall` | Nucleaire: supprime TOUT (config + services + cloudflared + binaire) |
+| `hop reset [-y]` | Remet la config a zero |
+| `hop update [-y]` | Mise a jour + changelog + checksum SHA256 |
+| `hop version [--check]` | Affiche la version |
+| `hop dashboard` | Interface web (local / reseau / tunnel) |
+| `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
 
 ## Pairing
 
-3 modes :
-- **Auto** (`hop pair`) : LAN + relay en parallele
-- **LAN** (`hop pair -m lan`) : broadcast UDP, zero internet
-- **Relay** (`hop pair -m relay`) : worker Cloudflare
+3 modes, chiffrement AES-GCM + Argon2id :
+- **Auto** : LAN + relay en parallele
+- **LAN** : broadcast UDP, zero internet
+- **Relay** : worker Cloudflare E2E
 
-Chiffrement AES-GCM + Argon2id. Le relay ne voit jamais les donnees en clair (E2E).
+Le relay ne voit jamais les donnees en clair.
 
 ### Worker custom
 
-Par defaut, hop utilise le relay `hop-pair.meumeudev.workers.dev`. Pour utiliser ton propre relay :
+```bash
+hop worker url https://hop-pair.ton-domaine.workers.dev
+```
+
+## Tunnels
 
 ```bash
-# Deploie le worker sur ton compte CF (code source dans worker/)
-hop worker url https://hop-pair.ton-domaine.workers.dev
+hop config cf             # configure CF
+hop tunnel setup          # cree le tunnel + DNS
 ```
 
 ## Dashboard
@@ -95,8 +123,7 @@ hop dashboard --bind 0.0.0.0      # reseau (mot de passe 8+ chars)
 
 ## Config
 
-`~/.hop/config.yml` — config principale
-`~/.hop/cloudflare.env` — credentials CF (gitignore)
+`~/.hop/config.yml` (installe) ou `/tmp/hop-<uid>/config.yml` (sandbox)
 
 ## License
 

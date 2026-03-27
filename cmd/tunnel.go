@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -168,11 +169,11 @@ var tunnelStatusCmd = &cobra.Command{
 }
 
 func extractTunnelID(jsonOutput string) string {
-	parts := strings.Split(jsonOutput, "\"")
-	for i, part := range parts {
-		if part == "id" && i+2 < len(parts) {
-			return parts[i+2]
-		}
+	var tunnels []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(jsonOutput), &tunnels); err == nil && len(tunnels) > 0 {
+		return tunnels[0].ID
 	}
 	return ""
 }
