@@ -170,6 +170,7 @@
         <div class="nav">
             <button class="active" onclick="showPage('local')">Local</button>
             <button onclick="showPage('pairing')">Pairing</button>
+            <button onclick="showPage('info')">Info</button>
         </div>
     </header>
 
@@ -227,6 +228,32 @@
             <div class="modal-actions">
                 <button class="btn-cancel" onclick="closeModal('service')">Annuler</button>
                 <button class="btn-save" onclick="saveService()">Sauvegarder</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- INFO PAGE -->
+    <div class="container page" id="page-info">
+        <div class="grid">
+            <div class="card full">
+                <h2>Mode</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><strong style="color:#3fb950;">Sandbox</strong> (defaut) — config dans <code>/tmp/</code>, disparait au reboot</p>
+                    <p><strong style="color:#58a6ff;">Installe</strong> (<code>hop install</code>) — config dans <code>~/.hop/</code>, permanent</p>
+                    <p style="margin-top: 8px;"><code>hop exit</code> — supprime toute trace (sandbox)</p>
+                    <p><code>hop uninstall</code> — supprime tout (installe)</p>
+                </div>
+            </div>
+            <div class="card full">
+                <h2>Commandes utiles</h2>
+                <div style="color: #8b949e; font-size: 13px; line-height: 2;">
+                    <p><code>hop config cf</code> — configure Cloudflare (domaine + token)</p>
+                    <p><code>hop config show</code> — affiche la config</p>
+                    <p><code>hop tunnel setup</code> — tunnel Cloudflare permanent</p>
+                    <p><code>hop worker url &lt;url&gt;</code> — worker custom</p>
+                    <p><code>hop export / import</code> — backup/restore chiffre</p>
+                    <p><code>hop update</code> — mise a jour + checksum SHA256</p>
+                </div>
             </div>
         </div>
     </div>
