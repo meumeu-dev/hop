@@ -30,18 +30,18 @@ func scpArgs(viaTunnel bool) []string {
 }
 
 var sendCmd = &cobra.Command{
-	Use:   "send <file-dir-or-url> <machine>",
+	Use:   "send <machine> <file-dir-or-url>",
 	Short: "Envoie un fichier, dossier ou URL vers une machine distante",
 	Long: `Envoie un fichier local ou telecharge une URL directement sur la machine distante.
 
-hop send fichier.txt rpi              # fichier local
-hop send dossier/ rpi                 # dossier entier
-hop send https://example.com/file rpi # URL (telecharge directement sur la machine)
-hop send fichier.txt rpi --to /opt/   # destination custom`,
+hop send rpi fichier.txt              # fichier local
+hop send rpi dossier/                 # dossier entier
+hop send rpi https://example.com/file # URL (telecharge directement sur la machine)
+hop send rpi fichier.txt --to /opt/   # destination custom`,
 	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		src := args[0]
-		machineName := args[1]
+		machineName := args[0]
+		src := args[1]
 
 		cfg, err := config.Load()
 		if err != nil {
@@ -156,7 +156,9 @@ func buildSSHArgs(target string, viaTunnel bool) []string {
 var receiveCmd = &cobra.Command{
 	Use:   "receive <machine> <remote-path>",
 	Short: "Recoit un fichier depuis une machine distante",
-	Args:  cobra.ExactArgs(2),
+	Long: `hop receive rpi /var/log/syslog         # recoit dans le dossier courant
+hop receive rpi /opt/data/ --to ~/tmp  # destination custom`,
+	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		machineName := args[0]
 		remotePath := args[1]
