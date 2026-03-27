@@ -50,7 +50,7 @@ var resetCmd = &cobra.Command{
 		}
 
 		fmt.Println("→ Config remise a zero.")
-		fmt.Println("  hop init    — pour reconfigurer")
+		fmt.Println("  hop config  — pour reconfigurer")
 		fmt.Println("  hop pair    — pour pairer une machine")
 	},
 }

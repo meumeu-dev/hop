@@ -32,7 +32,7 @@ var addMachineCmd = &cobra.Command{
 				tunnel = name + "." + cfg.Cloudflare.Domain
 				fmt.Printf("→ Tunnel auto: %s\n", tunnel)
 			} else {
-				fmt.Fprintln(os.Stderr, "Domaine Cloudflare non configuré. Lance 'hop init' ou 'hop dashboard' d'abord.")
+				fmt.Fprintln(os.Stderr, "Domaine Cloudflare non configuré. Lance 'hop config' d'abord.")
 				os.Exit(1)
 			}
 		}

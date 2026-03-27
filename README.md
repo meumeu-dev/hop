@@ -13,7 +13,7 @@ curl -sL meumeu.dev/hop/install | bash
 ## Demarrage rapide
 
 ```bash
-hop init                  # configure hop (sandbox par defaut)
+hop config                  # configure hop (sandbox par defaut)
 
 hop pair                  # machine A — affiche un token
 hop pair <token>          # machine B — se connecte
@@ -65,12 +65,11 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 ### Cloudflare
 | Commande | Description |
 |----------|-------------|
-| `hop config cf` | Configure Cloudflare (domaine + token) |
-| `hop config cf --env <fichier-ou-url>` | Importe un .env CF |
-| `hop config show` | Affiche la config actuelle |
+| `hop config` | Configure Cloudflare + worker (interactif) |
+| `hop config --env <fichier-ou-url>` | Importe un .env CF |
+| `hop config --show` | Affiche la config actuelle |
 | `hop tunnel setup` | Cree un tunnel Cloudflare permanent |
 | `hop tunnel status` | Status des tunnels |
-| `hop worker url [url]` | Configure un worker custom |
 
 ### Sauvegarde
 | Commande | Description |
@@ -82,7 +81,7 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 ### Systeme
 | Commande | Description |
 |----------|-------------|
-| `hop init` | Configure hop (sandbox par defaut) |
+| `hop config` | Configure hop (sandbox par defaut) |
 | `hop install` | Rend permanent (~/.hop/, survit au reboot) |
 | `hop exit` | Furtif: supprime config + binaire, zero trace |
 | `hop uninstall` | Nucleaire: supprime TOUT (config + services + cloudflared + binaire) |
@@ -103,14 +102,12 @@ Le relay ne voit jamais les donnees en clair.
 
 ### Worker custom
 
-```bash
-hop worker url https://hop-pair.ton-domaine.workers.dev
-```
+Le worker custom se configure dans `hop config` (question interactive).
 
 ## Tunnels
 
 ```bash
-hop config cf             # configure CF
+hop config             # configure CF
 hop tunnel setup          # cree le tunnel + DNS
 ```
 
