@@ -134,15 +134,13 @@ func runAIDisable(cfg *config.Config) {
 }
 
 func runAILimits(cfg *config.Config) {
-	accountID, _, err := loadCFCredentials(cfg)
+	accountID, apiKey, err := loadCFCredentials(cfg)
 	if err != nil || accountID == "" {
 		fmt.Fprintln(os.Stderr, "CF_ACCOUNT_ID non configure.")
 		fmt.Fprintln(os.Stderr, "Ajoute CF_ACCOUNT_ID=xxx dans ton fichier cloudflare.env")
 		os.Exit(1)
 	}
-
-	_, apiKey, err := loadCFCredentials(cfg)
-	if err != nil || apiKey == "" {
+	if apiKey == "" {
 		fmt.Fprintln(os.Stderr, "CF_API_KEY non configure (hop config).")
 		os.Exit(1)
 	}

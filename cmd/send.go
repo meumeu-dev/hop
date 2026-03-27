@@ -177,7 +177,7 @@ func splitTargetPort(target string) (string, string) {
 // Returns (args, cleanTarget) where cleanTarget has port stripped
 func buildSSHArgs(target string, viaTunnel bool) ([]string, string) {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
-	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
+	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
 		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
@@ -190,10 +190,9 @@ func buildSSHArgs(target string, viaTunnel bool) ([]string, string) {
 	return args, cleanTarget
 }
 
-// buildSCPArgs builds SCP args (uses -P for port instead of -p)
 func buildSCPArgs(viaTunnel bool, target string) ([]string, string) {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
-	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
+	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
 		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
