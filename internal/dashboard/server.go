@@ -140,10 +140,6 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pair", handlePair)
 }
 
-func Start(port int, open bool) error {
-	return StartWithBind(port, "127.0.0.1", "", open)
-}
-
 func StartWithBind(port int, bind string, password string, open bool) error {
 	mux := http.NewServeMux()
 	registerAPIRoutes(mux)

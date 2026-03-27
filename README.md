@@ -2,7 +2,7 @@
 
 > **Beta** — en cours de dev. Feedback bienvenu via les [issues](https://github.com/meumeu-dev/hop/issues).
 
-Un seul binaire pour gerer toutes tes machines. SSH, pairing chiffre, tunnels Cloudflare.
+Un seul binaire pour gerer toutes tes machines. SSH, pairing chiffre E2E, tunnels Cloudflare.
 
 ## Installation
 
@@ -13,14 +13,12 @@ curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | b
 ## Demarrage rapide
 
 ```bash
-hop init
+hop init                  # configure hop (+ Cloudflare optionnel)
 
-# Pairer deux machines
-hop pair          # machine A
-hop pair <token>  # machine B
+hop pair                  # machine A — affiche un token
+hop pair <token>          # machine B — se connecte
 
-# Se connecter
-hop ssh rpi
+hop ssh rpi               # SSH (auto LAN ou tunnel)
 ```
 
 ## Commandes
@@ -34,6 +32,8 @@ hop ssh rpi
 | `hop list` | Liste tout |
 | `hop add machine/service` | Ajoute |
 | `hop remove/rename/alias` | Gestion |
+| `hop config cf` | Configure Cloudflare (domaine + token) |
+| `hop config show` | Affiche la config |
 | `hop tunnel setup` | Tunnel Cloudflare permanent |
 | `hop dashboard` | Interface web |
 | `hop export [--cloud]` | Backup config chiffre |
@@ -42,6 +42,15 @@ hop ssh rpi
 | `hop update [-y]` | Mise a jour + checksum SHA256 |
 | `hop reset/uninstall` | Cleanup |
 | `hop completion` | Autocompletion |
+
+## Cloudflare
+
+```bash
+hop config cf             # configure domaine + token API en une fois
+hop tunnel setup          # cree un tunnel permanent + systemd
+```
+
+Necessite un compte Cloudflare (gratuit) + un domaine. `hop init` propose de configurer CF au demarrage.
 
 ## Pairing
 
@@ -58,28 +67,20 @@ Par defaut, hop utilise le relay `hop-pair.meumeudev.workers.dev`. Pour utiliser
 
 ```bash
 # Deploie le worker sur ton compte CF (code source dans worker/)
-# Puis configure l'URL
 hop worker url https://hop-pair.ton-domaine.workers.dev
 ```
-
-## Tunnels
-
-```bash
-hop tunnel setup    # Cloudflare Tunnel permanent + systemd
-```
-
-Necessite un compte Cloudflare (gratuit) + un domaine.
 
 ## Dashboard
 
 ```bash
 hop dashboard                     # localhost
-hop dashboard --bind 0.0.0.0      # reseau (mot de passe requis)
+hop dashboard --bind 0.0.0.0      # reseau (mot de passe 8+ chars)
 ```
 
 ## Config
 
-`~/.hop/config.yml` + `~/.hop/secrets.yml`
+`~/.hop/config.yml` — config principale
+`~/.hop/cloudflare.env` — credentials CF (gitignore)
 
 ## License
 

@@ -88,7 +88,7 @@ var tunnelSetupCmd = &cobra.Command{
 			}
 		} else {
 			fmt.Println("\n→ Etape 3: Pas de domaine configure, route DNS ignoree.")
-			fmt.Println("  Configure ton domaine avec 'hop init'.")
+			fmt.Println("  Configure ton domaine avec 'hop config cf'.")
 		}
 
 		// Step 4: Generate config

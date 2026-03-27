@@ -51,9 +51,8 @@ Avec un token: se connecte à la machine en attente (mode client).
 
 Le token est affiché par 'hop pair' sur l'autre machine.
 Formats:
-  Worker:  <pair_id>.<code>.<token>
-  LAN:     <code> (6 chiffres)
-  Worker:  utilise le relay par defaut ou configure avec hop worker url`,
+  Relay:   <pair_id>.<code>.<token>
+  LAN:     <code> (8 caracteres alphanumeriques)`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {

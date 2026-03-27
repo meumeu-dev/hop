@@ -28,12 +28,8 @@ var exportCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Include secrets
-		secrets, _ := config.LoadSecrets()
-
 		exportData := map[string]interface{}{
 			"config":  cfg,
-			"secrets": secrets,
 			"version": version,
 		}
 
@@ -187,9 +183,8 @@ var importCmd = &cobra.Command{
 		}
 
 		var exportData struct {
-			Config  *config.Config  `json:"config"`
-			Secrets *config.Secrets `json:"secrets"`
-			Version string          `json:"version"`
+			Config  *config.Config `json:"config"`
+			Version string         `json:"version"`
 		}
 		if err := json.Unmarshal(decrypted, &exportData); err != nil {
 			fmt.Fprintln(os.Stderr, "Donnees corrompues")
@@ -223,13 +218,6 @@ var importCmd = &cobra.Command{
 				os.Exit(1)
 			}
 		}
-		if exportData.Secrets != nil {
-			if err := exportData.Secrets.Save(); err != nil {
-				fmt.Fprintf(os.Stderr, "Erreur sauvegarde secrets: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
 		fmt.Println("→ Config importee avec succes.")
 	},
 }

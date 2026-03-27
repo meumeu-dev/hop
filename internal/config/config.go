@@ -111,10 +111,6 @@ func ConfigPath() string {
 	return filepath.Join(HopDir(), "config.yml")
 }
 
-func SecretsPath() string {
-	return filepath.Join(HopDir(), "secrets.yml")
-}
-
 func ExpandPath(path string) string {
 	if strings.HasPrefix(path, "~") {
 		home, _ := os.UserHomeDir()
@@ -129,33 +125,6 @@ func ExpandPath(path string) string {
 	return cleaned
 }
 
-// Secrets stored separately from config (gitignored)
-type Secrets struct {
-}
-
-func LoadSecrets() (*Secrets, error) {
-	data, err := os.ReadFile(SecretsPath())
-	if err != nil {
-		return &Secrets{}, nil
-	}
-	var s Secrets
-	if err := yaml.Unmarshal(data, &s); err != nil {
-		return &Secrets{}, nil
-	}
-	return &s, nil
-}
-
-func (s *Secrets) Save() error {
-	data, err := yaml.Marshal(s)
-	if err != nil {
-		return err
-	}
-	path := SecretsPath()
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0600)
-}
 
 // ResolveAlias returns the real name if an alias exists, otherwise the input
 func (c *Config) ResolveAlias(name string) string {
