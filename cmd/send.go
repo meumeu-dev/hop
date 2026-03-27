@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
@@ -29,9 +30,15 @@ func scpArgs(viaTunnel bool) []string {
 }
 
 var sendCmd = &cobra.Command{
-	Use:   "send <file-or-dir> <machine>",
-	Short: "Envoie un fichier ou dossier vers une machine distante",
-	Args:  cobra.ExactArgs(2),
+	Use:   "send <file-dir-or-url> <machine>",
+	Short: "Envoie un fichier, dossier ou URL vers une machine distante",
+	Long: `Envoie un fichier local ou telecharge une URL directement sur la machine distante.
+
+hop send fichier.txt rpi              # fichier local
+hop send dossier/ rpi                 # dossier entier
+hop send https://example.com/file rpi # URL (telecharge directement sur la machine)
+hop send fichier.txt rpi --to /opt/   # destination custom`,
+	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		src := args[0]
 		machineName := args[1]
@@ -49,56 +56,101 @@ var sendCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Check source exists
-		info, err := os.Stat(src)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Source introuvable: %v\n", err)
-			os.Exit(1)
+		// Detect if source is a URL
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			runSendURL(src, machineName, machine)
+			return
 		}
 
-		target, viaTunnel := detectTarget(machine)
-
-		dest := sendToFlag
-		if dest == "" {
-			dest = "~/hop-received/"
-		}
-
-		remoteTarget := fmt.Sprintf("%s:%s", target, dest)
-
-		// Ensure remote destination directory exists (best-effort)
-		hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
-		mkdirArgs := []string{"-i", hopKeyPath}
-		if viaTunnel {
-			cfPath := cloudflared.Path()
-			mkdirArgs = append(mkdirArgs, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
-		}
-		mkdirArgs = append(mkdirArgs, "-o", "StrictHostKeyChecking=accept-new", target, "--", "mkdir", "-p", dest)
-		mkdirCmd := exec.Command("ssh", mkdirArgs...)
-		mkdirCmd.Stderr = os.Stderr
-		_ = mkdirCmd.Run() // best-effort
-
-		// Build scp command
-		scpBaseArgs := scpArgs(viaTunnel)
-		if info.IsDir() {
-			scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
-		}
-		scpBaseArgs = append(scpBaseArgs, src, remoteTarget)
-
-		fmt.Printf("→ Envoi de '%s' vers %s:%s\n", src, machineName, dest)
-
-		sh := exec.Command("scp", scpBaseArgs...)
-		sh.Stdin = os.Stdin
-		sh.Stdout = os.Stdout
-		sh.Stderr = os.Stderr
-		if err := sh.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
-			}
-			fmt.Fprintf(os.Stderr, "Erreur scp: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("→ Transfert termine.\n")
+		runSendFile(src, machineName, machine)
 	},
+}
+
+func runSendURL(url string, machineName string, machine config.Machine) {
+	target, viaTunnel := detectTarget(machine)
+
+	dest := sendToFlag
+	if dest == "" {
+		dest = "~/hop-received/"
+	}
+
+	// Remote command: mkdir + curl (fallback wget)
+	remoteCmd := fmt.Sprintf("mkdir -p %s && cd %s && (curl -sSLO '%s' || wget -q '%s')",
+		dest, dest, url, url)
+
+	fmt.Printf("→ Telechargement de %s sur %s\n", url, machineName)
+
+	sshCmdArgs := buildSSHArgs(target, viaTunnel)
+	sshCmdArgs = append(sshCmdArgs, target, "--", remoteCmd)
+
+	sh := exec.Command("ssh", sshCmdArgs...)
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	if err := sh.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("→ Telecharge sur %s dans %s\n", machineName, dest)
+}
+
+func runSendFile(src string, machineName string, machine config.Machine) {
+	info, err := os.Stat(src)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Source introuvable: %v\n", err)
+		os.Exit(1)
+	}
+
+	target, viaTunnel := detectTarget(machine)
+
+	dest := sendToFlag
+	if dest == "" {
+		dest = "~/hop-received/"
+	}
+
+	remoteTarget := fmt.Sprintf("%s:%s", target, dest)
+
+	// Ensure remote destination directory exists
+	mkdirArgs := buildSSHArgs(target, viaTunnel)
+	mkdirArgs = append(mkdirArgs, target, "--", "mkdir", "-p", dest)
+	mkdirCmd := exec.Command("ssh", mkdirArgs...)
+	mkdirCmd.Stderr = os.Stderr
+	_ = mkdirCmd.Run()
+
+	scpBaseArgs := scpArgs(viaTunnel)
+	if info.IsDir() {
+		scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
+	}
+	scpBaseArgs = append(scpBaseArgs, src, remoteTarget)
+
+	fmt.Printf("→ Envoi de '%s' vers %s:%s\n", src, machineName, dest)
+
+	sh := exec.Command("scp", scpBaseArgs...)
+	sh.Stdin = os.Stdin
+	sh.Stdout = os.Stdout
+	sh.Stderr = os.Stderr
+	if err := sh.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "Erreur scp: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("→ Transfert termine.\n")
+}
+
+// buildSSHArgs builds SSH args with hop key + tunnel proxy if needed
+func buildSSHArgs(target string, viaTunnel bool) []string {
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
+	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
+	if viaTunnel {
+		cfPath := cloudflared.Path()
+		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+	}
+	return args
 }
 
 var receiveCmd = &cobra.Command{
