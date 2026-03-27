@@ -232,6 +232,12 @@ func runRemoteTmux(m config.Machine, svc config.Service, serviceName string, ses
 	}
 }
 
+// isHostPort returns true if s looks like "host:port" (quick tunnel URL).
+func isHostPort(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	return err == nil && host != "" && port != "" && port != "22"
+}
+
 func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	// 1. Try LAN
 	if m.IP != "" {
@@ -245,6 +251,15 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 
 	// 2. Try configured tunnel
 	if m.Tunnel != "" {
+		// Quick tunnel: host:port format (Pinggy/ngrok)
+		if isHostPort(m.Tunnel) {
+			host, port, _ := net.SplitHostPort(m.Tunnel)
+			fmt.Printf("→ Connexion via tunnel rapide (%s)\n", m.Tunnel)
+			// Return special marker; sshArgs will handle the port
+			return m.User + "@" + host + ":" + port, false
+		}
+
+		// Cloudflare tunnel: plain hostname
 		if _, err := cloudflared.EnsureInstalled(); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 			fmt.Fprintln(os.Stderr, "Installe cloudflared avec: hop tunnel setup")
@@ -254,11 +269,10 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 		return m.User + "@" + m.Tunnel, true
 	}
 
-
 	fmt.Fprintln(os.Stderr, "Aucune connexion disponible.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "La machine n'est pas joignable en LAN et aucun tunnel n'est configure.")
-	fmt.Fprintln(os.Stderr, "Pour l'acces distant: hop tunnel setup (Cloudflare Tunnel permanent)")
+	fmt.Fprintln(os.Stderr, "Pour l'acces distant: hop tunnel setup (Cloudflare) ou hop tunnel quick (Pinggy/ngrok)")
 	os.Exit(1)
 	return "", false
 }
@@ -268,7 +282,21 @@ func sshArgs(target string, viaTunnel bool) []string {
 	if viaTunnel {
 		cfPath := cloudflared.Path()
 		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+		args = append(args, target)
+		return args
 	}
+
+	// Quick tunnel: target may be "user@host:port"
+	// Split off port if present
+	if atIdx := strings.LastIndex(target, "@"); atIdx >= 0 {
+		userPart := target[:atIdx]
+		hostPart := target[atIdx+1:]
+		if host, port, err := net.SplitHostPort(hostPart); err == nil {
+			args = append(args, "-p", port, userPart+"@"+host)
+			return args
+		}
+	}
+
 	args = append(args, target)
 	return args
 }
