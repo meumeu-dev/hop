@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -176,10 +177,35 @@ func runConfigCF() {
 	if cfg.WorkerURL != "" {
 		fmt.Printf("→ Worker: %s\n", cfg.WorkerURL)
 	}
-	fmt.Println()
-	fmt.Println("Prochaines etapes:")
-	fmt.Println("  hop tunnel setup       — creer un tunnel")
-	fmt.Println("  hop pair               — pairer une machine")
+
+	// Auto-setup tunnel if account ID is available
+	hasAccountID := false
+	for _, line := range strings.Split(envContent, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "CF_ACCOUNT_ID=") {
+			val := strings.TrimPrefix(strings.TrimSpace(line), "CF_ACCOUNT_ID=")
+			if val != "" {
+				hasAccountID = true
+			}
+		}
+	}
+
+	if hasAccountID {
+		fmt.Println()
+		fmt.Println("→ Configuration automatique du tunnel SSH...")
+
+		hostname, _ := os.Hostname()
+		hopBin, _ := os.Executable()
+		setupCmd := exec.Command(hopBin, "tunnel", "setup", hostname)
+		setupCmd.Stdin = os.Stdin
+		setupCmd.Stdout = os.Stdout
+		setupCmd.Stderr = os.Stderr
+		setupCmd.Run()
+	} else {
+		fmt.Println()
+		fmt.Println("Prochaines etapes:")
+		fmt.Println("  hop tunnel setup       — creer un tunnel (ajoute CF_ACCOUNT_ID pour auto)")
+		fmt.Println("  hop pair               — pairer une machine")
+	}
 }
 
 func loadEnvFrom(source string) (string, error) {
