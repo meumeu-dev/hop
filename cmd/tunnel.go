@@ -115,27 +115,38 @@ var tunnelSetupCmd = &cobra.Command{
 			fmt.Printf("  Config ecrite: %s\n", cfConfigPath)
 		}
 
-		// Step 5: Install as service
-		fmt.Print("\n→ Installer cloudflared comme service systemd ? [o/N]: ")
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
-		if confirm == "o" || confirm == "oui" || confirm == "y" || confirm == "yes" {
-			serviceCmd := exec.Command("sudo", cfPath, "service", "install")
-			serviceCmd.Stdin = os.Stdin
-			serviceCmd.Stdout = os.Stdout
-			serviceCmd.Stderr = os.Stderr
-			if err := serviceCmd.Run(); err != nil {
-				fmt.Println("  Erreur installation service. Tu peux lancer manuellement:")
-				fmt.Printf("  sudo %s service install\n", cfPath)
-			} else {
-				fmt.Println("  Service installe et demarre.")
+		// Step 5: Run tunnel
+		if config.IsInstalled() {
+			fmt.Print("\n→ Installer comme service systemd (permanent) ? [o/N]: ")
+			confirm, _ := reader.ReadString('\n')
+			confirm = strings.TrimSpace(strings.ToLower(confirm))
+			if confirm == "o" || confirm == "oui" || confirm == "y" || confirm == "yes" {
+				serviceCmd := exec.Command("sudo", cfPath, "service", "install")
+				serviceCmd.Stdin = os.Stdin
+				serviceCmd.Stdout = os.Stdout
+				serviceCmd.Stderr = os.Stderr
+				if err := serviceCmd.Run(); err != nil {
+					fmt.Printf("  Erreur. Lance manuellement: sudo %s service install\n", cfPath)
+				} else {
+					fmt.Println("  Service installe et demarre.")
+				}
+				fmt.Println("\n→ Tunnel permanent configure !")
+				return
 			}
-		} else {
-			fmt.Println("  Pour lancer manuellement:")
-			fmt.Printf("  %s tunnel run %s\n", cfPath, tunnelName)
 		}
 
-		fmt.Println("\n→ Tunnel configure !")
+		// Foreground mode (default, sandbox-friendly)
+		fmt.Println("\n→ Lancement du tunnel en foreground...")
+		fmt.Println("  Ctrl+C pour arreter.")
+		if !config.IsInstalled() {
+			fmt.Println("  (hop install pour rendre permanent)")
+		}
+		fmt.Println()
+		runCmd := exec.Command(cfPath, "tunnel", "run", "--", tunnelName)
+		runCmd.Stdin = os.Stdin
+		runCmd.Stdout = os.Stdout
+		runCmd.Stderr = os.Stderr
+		runCmd.Run()
 	},
 }
 

@@ -13,14 +13,23 @@ import (
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Supprime hop completement (binaire + config)",
+	Short: "Supprime hop completement (binaire + config + services)",
 	Run: func(cmd *cobra.Command, args []string) {
 		hopDir := config.HopDir()
+		permanentDir := config.PermanentDir()
 		execPath, _ := os.Executable()
 
 		fmt.Println("Ceci va supprimer:")
-		fmt.Printf("  %s (config, cles, secrets)\n", hopDir)
+		if config.IsInstalled() {
+			fmt.Printf("  %s (config permanente)\n", permanentDir)
+		}
+		if hopDir != permanentDir {
+			fmt.Printf("  %s (config sandbox)\n", hopDir)
+		}
 		fmt.Printf("  %s (binaire)\n", execPath)
+		if config.IsInstalled() {
+			fmt.Println("  Service cloudflared (si installe)")
+		}
 		fmt.Println()
 
 		reader := bufio.NewReader(os.Stdin)
@@ -35,12 +44,29 @@ var uninstallCmd = &cobra.Command{
 
 		hasError := false
 
-		// Remove ~/.hop/
+		// Stop and remove cloudflared service if installed
+		if config.IsInstalled() {
+			exec.Command("sudo", "cloudflared", "service", "uninstall").Run()
+		}
+
+		// Remove sandbox dir
 		if err := os.RemoveAll(hopDir); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", hopDir, err)
 			hasError = true
 		} else {
 			fmt.Printf("→ %s supprime\n", hopDir)
+		}
+
+		// Remove permanent dir (if different)
+		if permanentDir != hopDir {
+			if _, err := os.Stat(permanentDir); err == nil {
+				if err := os.RemoveAll(permanentDir); err != nil {
+					fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", permanentDir, err)
+					hasError = true
+				} else {
+					fmt.Printf("→ %s supprime\n", permanentDir)
+				}
+			}
 		}
 
 		// Remove binary
@@ -52,13 +78,13 @@ var uninstallCmd = &cobra.Command{
 				sudoCmd.Stdout = os.Stdout
 				sudoCmd.Stderr = os.Stderr
 				if sudoErr := sudoCmd.Run(); sudoErr != nil {
-					fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, sudoErr)
+					fmt.Fprintf(os.Stderr, "Erreur: %v\n", sudoErr)
 					hasError = true
 				} else {
 					fmt.Printf("→ %s supprime\n", execPath)
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", execPath, err)
+				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 				hasError = true
 			}
 		} else {
@@ -68,7 +94,7 @@ var uninstallCmd = &cobra.Command{
 		if hasError {
 			os.Exit(1)
 		}
-		fmt.Println("→ hop desinstalle.")
+		fmt.Println("→ hop desinstalle. Zero trace.")
 	},
 }
 

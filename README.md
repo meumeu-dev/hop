@@ -13,13 +13,27 @@ curl -sSL https://raw.githubusercontent.com/meumeu-dev/hop/master/install.sh | b
 ## Demarrage rapide
 
 ```bash
-hop init                  # configure hop (+ Cloudflare optionnel)
+hop init                  # configure hop (mode sandbox par defaut)
 
 hop pair                  # machine A — affiche un token
 hop pair <token>          # machine B — se connecte
 
 hop ssh rpi               # SSH (auto LAN ou tunnel)
+
+hop install               # rend permanent (survit au reboot)
+hop exit                  # supprime toute trace (mode sandbox)
 ```
+
+## Sandbox vs Installe
+
+Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait au reboot.
+
+| | Sandbox (defaut) | Installe (`hop install`) |
+|---|---|---|
+| Config | `/tmp/hop-<uid>/` | `~/.hop/` |
+| Reboot | Config perdue | Config persistante |
+| Tunnel | Foreground | Service systemd |
+| Nettoyage | `hop exit` (zero trace) | `hop uninstall` |
 
 ## Commandes
 
@@ -40,6 +54,8 @@ hop ssh rpi               # SSH (auto LAN ou tunnel)
 | `hop import <source>` | Restaure config |
 | `hop worker url [url]` | Configure worker custom |
 | `hop update [-y]` | Mise a jour + checksum SHA256 |
+| `hop install` | Rend permanent (survit au reboot) |
+| `hop exit` | Supprime toute trace (sandbox) |
 | `hop reset/uninstall` | Cleanup |
 | `hop completion` | Autocompletion |
 

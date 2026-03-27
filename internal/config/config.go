@@ -102,7 +102,31 @@ func ValidateRustdeskID(id string) error {
 	return nil
 }
 
+// IsInstalled returns true if hop is in installed mode (~/.hop exists with installed marker)
+func IsInstalled() bool {
+	home, _ := os.UserHomeDir()
+	_, err := os.Stat(filepath.Join(home, ".hop", ".installed"))
+	return err == nil
+}
+
+// HopDir returns the config directory
+// Sandbox mode (default): /tmp/hop-<uid>/
+// Installed mode: ~/.hop/
 func HopDir() string {
+	home, _ := os.UserHomeDir()
+	installedDir := filepath.Join(home, ".hop")
+
+	// If installed mode, use ~/.hop/
+	if _, err := os.Stat(filepath.Join(installedDir, ".installed")); err == nil {
+		return installedDir
+	}
+
+	// Sandbox mode: /tmp/hop-<uid>/
+	return filepath.Join(os.TempDir(), fmt.Sprintf("hop-%d", os.Getuid()))
+}
+
+// PermanentDir returns ~/.hop/ regardless of mode (for hop install)
+func PermanentDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".hop")
 }

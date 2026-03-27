@@ -15,6 +15,12 @@ var initCmd = &cobra.Command{
 	Short: "Configure hop depuis zero",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("=== hop init ===")
+		if config.IsInstalled() {
+			fmt.Println("Mode: installe (~/.hop/)")
+		} else {
+			fmt.Printf("Mode: sandbox (%s) — disparait au reboot\n", config.HopDir())
+			fmt.Println("  hop install pour rendre permanent")
+		}
 		fmt.Println()
 
 		if err := config.Init(); err != nil {
