@@ -84,7 +84,6 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 ### Systeme
 | Commande | Description |
 |----------|-------------|
-| `hop config` | Configure hop (sandbox par defaut) |
 | `hop install` | Rend permanent (~/.hop/, survit au reboot) |
 | `hop exit` | Furtif: supprime config + binaire, zero trace |
 | `hop uninstall` | Nucleaire: supprime TOUT (config + services + cloudflared + binaire) |

@@ -87,7 +87,12 @@ func ValidateTunnel(hostname string) error {
 	if hostname == "" {
 		return nil
 	}
-	if !validHostname.MatchString(hostname) {
+	// Accept host:port format (Pinggy quick tunnels)
+	host := hostname
+	if idx := strings.LastIndex(hostname, ":"); idx > 0 {
+		host = hostname[:idx]
+	}
+	if !validHostname.MatchString(host) {
 		return fmt.Errorf("hostname tunnel invalide")
 	}
 	return nil

@@ -5,8 +5,9 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Configure hop (alias de hop config)",
+	Use:    "init",
+	Short:  "Configure hop (alias de hop config)",
+	Hidden: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		configCmd.Run(cmd, args)
 	},
