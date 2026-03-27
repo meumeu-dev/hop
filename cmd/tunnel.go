@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	cf "github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/cfaccess"
+	cf "github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -37,12 +37,6 @@ var tunnelSetupCmd = &cobra.Command{
 			loadEnvFile(config.ExpandPath(cfg.Cloudflare.EnvFile))
 		}
 
-		cfPath, err := cf.EnsureInstalled()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-			os.Exit(1)
-		}
-
 		reader := bufio.NewReader(os.Stdin)
 
 		tunnelName := ""
@@ -60,56 +54,87 @@ var tunnelSetupCmd = &cobra.Command{
 			}
 		}
 
-		// Step 1: Login
-		fmt.Println("\n→ Etape 1: Authentification Cloudflare")
-		certPath := os.ExpandEnv("$HOME/.cloudflared/cert.pem")
-		if _, err := os.Stat(certPath); os.IsNotExist(err) {
-			if err := cf.Run("tunnel", "login"); err != nil {
-				fmt.Fprintf(os.Stderr, "Erreur login: %v\n", err)
-				os.Exit(1)
-			}
+		// Step 1: Load CF API credentials (no browser login needed)
+		fmt.Println("\n→ Etape 1: Authentification Cloudflare (via API key)")
+		cfEnv, err := cfaccess.LoadCFEnv(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			fmt.Fprintln(os.Stderr, "  Configure tes identifiants CF avec 'hop config' (CF_USER, CF_API_KEY, CF_ACCOUNT_ID dans cloudflare.env)")
+			os.Exit(1)
+		}
+		fmt.Println("  API key chargee (pas de navigateur requis).")
+
+		// Step 2: Create tunnel via CF API
+		fmt.Printf("\n→ Etape 2: Creation du tunnel '%s' (via API)\n", tunnelName)
+		tunnelInfo, err := cfaccess.CreateTunnel(cfEnv, tunnelName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur creation tunnel: %v\n", err)
+			os.Exit(1)
+		}
+		tunnelID := tunnelInfo.ID
+		if tunnelInfo.Secret != "" {
+			fmt.Printf("  Tunnel cree (id: %s)\n", tunnelID)
 		} else {
-			fmt.Println("  Deja authentifie.")
+			fmt.Printf("  Tunnel existant (id: %s)\n", tunnelID)
 		}
 
-		// Step 2: Create tunnel
-		fmt.Printf("\n→ Etape 2: Creation du tunnel '%s'\n", tunnelName)
-		createCmd := exec.Command(cfPath, "tunnel", "create", "--", tunnelName)
-		createCmd.Stdout = os.Stdout
-		createCmd.Stderr = os.Stderr
-		if err := createCmd.Run(); err != nil {
-			fmt.Println("  Le tunnel existe peut-etre deja, on continue...")
-		}
-
-		// Step 3: Route DNS
+		// Step 3: Route DNS via CF API
 		if cfg.Cloudflare.Domain != "" {
 			hostname := tunnelName + "." + cfg.Cloudflare.Domain
-			fmt.Printf("\n→ Etape 3: Route DNS %s\n", hostname)
-			routeCmd := exec.Command(cfPath, "tunnel", "route", "dns", "--", tunnelName, hostname)
-			routeCmd.Stdout = os.Stdout
-			routeCmd.Stderr = os.Stderr
-			if err := routeCmd.Run(); err != nil {
-				fmt.Printf("  Route DNS peut-etre deja existante pour %s\n", hostname)
+			fmt.Printf("\n→ Etape 3: Route DNS %s (via API)\n", hostname)
+
+			zoneID, err := cfaccess.GetZoneID(cfEnv, cfg.Cloudflare.Domain)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Erreur zone ID: %v\n", err)
+				fmt.Fprintln(os.Stderr, "  Route DNS ignoree. Configurez manuellement le CNAME.")
+			} else {
+				if err := cfaccess.CreateDNSRecord(cfEnv, zoneID, hostname, tunnelID); err != nil {
+					fmt.Fprintf(os.Stderr, "  Erreur DNS: %v\n", err)
+				} else {
+					fmt.Printf("  CNAME %s → %s.cfargotunnel.com\n", hostname, tunnelID)
+				}
 			}
 		} else {
 			fmt.Println("\n→ Etape 3: Pas de domaine configure, route DNS ignoree.")
 			fmt.Println("  Configure ton domaine avec 'hop config'.")
 		}
 
-		// Step 4: Generate config
+		// Step 4: Generate config + credentials file
 		fmt.Println("\n→ Etape 4: Generation de la config cloudflared")
 		home, _ := os.UserHomeDir()
 		cfConfigDir := filepath.Join(home, ".cloudflared")
 		cfConfigPath := filepath.Join(cfConfigDir, "config.yml")
 
-		listCmd := exec.Command(cfPath, "tunnel", "list", "-o", "json")
-		listOut, err := listCmd.Output()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur: impossible de lister les tunnels\n")
+		// Ensure .cloudflared directory exists
+		if err := os.MkdirAll(cfConfigDir, 0700); err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur creation dir %s: %v\n", cfConfigDir, err)
 			os.Exit(1)
 		}
 
-		tunnelID := extractTunnelID(string(listOut))
+		// Write tunnel credentials file (needed by cloudflared tunnel run)
+		if tunnelInfo.Secret != "" {
+			credsPath := filepath.Join(cfConfigDir, tunnelID+".json")
+			creds := map[string]string{
+				"AccountTag":   cfEnv.AccountID,
+				"TunnelSecret": tunnelInfo.Secret,
+				"TunnelID":     tunnelID,
+			}
+			credsJSON, _ := json.MarshalIndent(creds, "", "  ")
+			if err := os.WriteFile(credsPath, credsJSON, 0600); err != nil {
+				fmt.Fprintf(os.Stderr, "Erreur ecriture credentials: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("  Credentials ecrites: %s\n", credsPath)
+		} else {
+			// Tunnel already existed — check if credentials file is present
+			credsPath := filepath.Join(cfConfigDir, tunnelID+".json")
+			if _, err := os.Stat(credsPath); os.IsNotExist(err) {
+				fmt.Printf("  ⚠ Fichier credentials absent: %s\n", credsPath)
+				fmt.Println("  Le tunnel existait deja. Si les credentials sont perdues,")
+				fmt.Println("  supprimez le tunnel dans le dashboard CF et relancez 'hop tunnel setup'.")
+			}
+		}
+
 		if tunnelID != "" && cfg.Cloudflare.Domain != "" {
 			cfConfig := fmt.Sprintf("tunnel: %s\ncredentials-file: %s/%s.json\n\ningress:\n  - hostname: %s.%s\n    service: ssh://localhost:22\n  - service: http_status:404\n",
 				tunnelID, cfConfigDir, tunnelID, tunnelName, cfg.Cloudflare.Domain)
@@ -151,7 +176,13 @@ var tunnelSetupCmd = &cobra.Command{
 			fmt.Println("  Relancez 'hop tunnel setup' apres 'hop config' pour configurer CF Access.")
 		}
 
-		// Step 6: Run tunnel
+		// Step 6: Run tunnel (cloudflared needed here)
+		cfPath, err := cf.EnsureInstalled()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur installation cloudflared: %v\n", err)
+			os.Exit(1)
+		}
+
 		if config.IsInstalled() {
 			fmt.Print("\n→ Installer comme service systemd (permanent) ? [o/N]: ")
 			confirm, _ := reader.ReadString('\n')
@@ -199,16 +230,6 @@ var tunnelStatusCmd = &cobra.Command{
 			os.Exit(1)
 		}
 	},
-}
-
-func extractTunnelID(jsonOutput string) string {
-	var tunnels []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal([]byte(jsonOutput), &tunnels); err == nil && len(tunnels) > 0 {
-		return tunnels[0].ID
-	}
-	return ""
 }
 
 var allowedEnvPrefixes = []string{"CF_", "CLOUDFLARE_"}

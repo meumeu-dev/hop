@@ -5,6 +5,8 @@ package cfaccess
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -320,6 +322,188 @@ func (c *cfClient) createPolicy(appID, policyName, tokenClientID string) error {
 			msgs[i] = e.Message
 		}
 		return fmt.Errorf("CF API: %s", strings.Join(msgs, "; "))
+	}
+	return nil
+}
+
+// ── Tunnel API ────────────────────────────────────────────────────────────────
+
+// TunnelInfo holds the result of creating or finding a Cloudflare tunnel.
+type TunnelInfo struct {
+	ID     string
+	Secret string // base64-encoded tunnel secret (only set on creation)
+}
+
+// CreateTunnel creates a named Cloudflare tunnel via the API.
+// If the tunnel already exists (409 conflict), it finds and returns the existing one.
+func CreateTunnel(env *CFEnv, name string) (*TunnelInfo, error) {
+	cl := newClient(env)
+
+	// Generate a random 32-byte secret
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, fmt.Errorf("generation secret: %w", err)
+	}
+	b64Secret := base64.StdEncoding.EncodeToString(secret)
+
+	url := fmt.Sprintf("%s/accounts/%s/cfd_tunnel", cfAPIBase, env.AccountID)
+	payload := map[string]interface{}{
+		"name":          name,
+		"tunnel_secret": b64Secret,
+	}
+	data, status, err := cl.do("POST", url, payload)
+	if err != nil {
+		return nil, fmt.Errorf("creation tunnel: %w", err)
+	}
+
+	if status == 409 {
+		// Tunnel already exists, find it
+		info, err := FindTunnel(env, name)
+		if err != nil {
+			return nil, err
+		}
+		if info == nil {
+			return nil, fmt.Errorf("tunnel '%s' existe deja mais introuvable dans la liste", name)
+		}
+		return info, nil
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Result  struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"result"`
+		Errors []cfError `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse create tunnel: %w", err)
+	}
+	if !resp.Success {
+		msgs := make([]string, len(resp.Errors))
+		for i, e := range resp.Errors {
+			msgs[i] = e.Message
+		}
+		return nil, fmt.Errorf("CF API create tunnel: %s", strings.Join(msgs, "; "))
+	}
+
+	return &TunnelInfo{
+		ID:     resp.Result.ID,
+		Secret: b64Secret,
+	}, nil
+}
+
+// FindTunnel looks up an existing tunnel by name.
+func FindTunnel(env *CFEnv, name string) (*TunnelInfo, error) {
+	cl := newClient(env)
+	url := fmt.Sprintf("%s/accounts/%s/cfd_tunnel?name=%s&is_deleted=false", cfAPIBase, env.AccountID, name)
+	data, _, err := cl.do("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("liste tunnels: %w", err)
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"result"`
+		Errors []cfError `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parse list tunnels: %w", err)
+	}
+	if !resp.Success {
+		msgs := make([]string, len(resp.Errors))
+		for i, e := range resp.Errors {
+			msgs[i] = e.Message
+		}
+		return nil, fmt.Errorf("CF API list tunnels: %s", strings.Join(msgs, "; "))
+	}
+
+	for _, t := range resp.Result {
+		if t.Name == name {
+			return &TunnelInfo{ID: t.ID}, nil
+		}
+	}
+	return nil, nil
+}
+
+// GetZoneID retrieves the zone ID for a given domain.
+func GetZoneID(env *CFEnv, domain string) (string, error) {
+	cl := newClient(env)
+	url := fmt.Sprintf("%s/zones?name=%s", cfAPIBase, domain)
+	data, _, err := cl.do("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("recherche zone: %w", err)
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"result"`
+		Errors []cfError `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return "", fmt.Errorf("parse zones: %w", err)
+	}
+	if !resp.Success || len(resp.Result) == 0 {
+		return "", fmt.Errorf("zone introuvable pour le domaine '%s'", domain)
+	}
+	return resp.Result[0].ID, nil
+}
+
+// CreateDNSRecord creates a CNAME record pointing to the tunnel.
+// If the record already exists, it is skipped (no error).
+func CreateDNSRecord(env *CFEnv, zoneID, hostname, tunnelID string) error {
+	cl := newClient(env)
+
+	// Check if record already exists
+	checkURL := fmt.Sprintf("%s/zones/%s/dns_records?type=CNAME&name=%s", cfAPIBase, zoneID, hostname)
+	data, _, err := cl.do("GET", checkURL, nil)
+	if err != nil {
+		return fmt.Errorf("verification DNS: %w", err)
+	}
+
+	var listResp struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID string `json:"id"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(data, &listResp); err == nil && len(listResp.Result) > 0 {
+		// Record already exists
+		return nil
+	}
+
+	// Create the CNAME
+	createURL := fmt.Sprintf("%s/zones/%s/dns_records", cfAPIBase, zoneID)
+	payload := map[string]interface{}{
+		"type":    "CNAME",
+		"name":    hostname,
+		"content": tunnelID + ".cfargotunnel.com",
+		"proxied": true,
+	}
+	data, _, err = cl.do("POST", createURL, payload)
+	if err != nil {
+		return fmt.Errorf("creation DNS: %w", err)
+	}
+
+	var createResp struct {
+		Success bool      `json:"success"`
+		Errors  []cfError `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &createResp); err != nil {
+		return fmt.Errorf("parse create DNS: %w", err)
+	}
+	if !createResp.Success {
+		msgs := make([]string, len(createResp.Errors))
+		for i, e := range createResp.Errors {
+			msgs[i] = e.Message
+		}
+		return fmt.Errorf("CF API create DNS: %s", strings.Join(msgs, "; "))
 	}
 	return nil
 }
