@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
@@ -73,14 +74,14 @@ Necessite:
 
 		// Save credentials in cloudflare.env (secured, gitignored)
 		envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", email, domain, apiKey)
-		envPath := config.HopDir() + "/cloudflare.env"
+		envPath := filepath.Join(config.HopDir(), "cloudflare.env")
 		if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
 			fmt.Fprintf(os.Stderr, "Erreur ecriture %s: %v\n", envPath, err)
 			os.Exit(1)
 		}
 
 		// Also store env_file reference in config
-		cfg.Cloudflare.EnvFile = "~/.hop/cloudflare.env"
+		cfg.Cloudflare.EnvFile = envPath
 		cfg.Save()
 
 		fmt.Println()

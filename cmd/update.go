@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"os"
 	"os/exec"
 	"runtime"
@@ -260,7 +261,7 @@ func CheckUpdateBackground() {
 	}
 
 	// Check once per day max
-	markerPath := config.HopDir() + "/.last-update-check"
+	markerPath := filepath.Join(config.HopDir(), ".last-update-check")
 	if info, err := os.Stat(markerPath); err == nil {
 		if time.Since(info.ModTime()) < 24*time.Hour {
 			return

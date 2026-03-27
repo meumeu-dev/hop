@@ -19,7 +19,7 @@ var resetCmd = &cobra.Command{
 		hopDir := config.HopDir()
 
 		if _, err := os.Stat(hopDir); os.IsNotExist(err) {
-			fmt.Println("Rien a reset, ~/.hop n'existe pas.")
+			fmt.Printf("Rien a reset, %s n'existe pas.\n", hopDir)
 			return
 		}
 

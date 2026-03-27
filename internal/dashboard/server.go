@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"path/filepath"
 	"net/url"
 	"os"
 	"os/exec"
@@ -466,7 +467,7 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write env file
-	envPath := config.ExpandPath("~/.hop/cloudflare.env")
+	envPath := filepath.Join(config.HopDir(), "cloudflare.env")
 	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", req.Email, req.Domain, req.APIKey)
 	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
 		jsonError(w, "cannot write env file", 500)
@@ -475,7 +476,7 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 
 	cfg.Cloudflare = config.CloudflareConfig{
 		Domain:  req.Domain,
-		EnvFile: "~/.hop/cloudflare.env",
+		EnvFile: envPath,
 	}
 
 	if err := cfg.Save(); err != nil {

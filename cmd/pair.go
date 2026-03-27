@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -527,7 +528,7 @@ func finalizePairClient(serverData *pairing.PairData) {
 
 func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKey string) {
 	target := server.User + "@" + server.IP
-	hopKeyPath := config.HopDir() + "/keys/hop_ed25519"
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
 
 	envContent := pairing.BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain)
 
@@ -537,7 +538,7 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 
 	// Pin host key if available from pairing
 	if server.HostKey != "" {
-		knownHostsPath := config.HopDir() + "/known_hosts_tmp"
+		knownHostsPath := filepath.Join(config.HopDir(), "known_hosts_tmp")
 		knownEntry := fmt.Sprintf("%s %s\n", server.IP, server.HostKey)
 		os.WriteFile(knownHostsPath, []byte(knownEntry), 0600)
 		defer os.Remove(knownHostsPath)

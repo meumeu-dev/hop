@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
@@ -29,12 +30,17 @@ hop install copie la config dans ~/.hop/ et la rend persistante.`,
 			os.Exit(1)
 		}
 
-		// Copy sandbox config to permanent if exists
-		if _, err := os.Stat(sandboxDir); err == nil {
+		// Verify sandbox dir is not a symlink (security)
+		if fi, err := os.Lstat(sandboxDir); err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				fmt.Fprintln(os.Stderr, "Erreur: le dossier sandbox est un lien symbolique (possible attaque)")
+				os.Exit(1)
+			}
+			// Copy sandbox config to permanent
 			entries, _ := os.ReadDir(sandboxDir)
 			for _, entry := range entries {
-				src := sandboxDir + "/" + entry.Name()
-				dst := permanentDir + "/" + entry.Name()
+				src := filepath.Join(sandboxDir, entry.Name())
+				dst := filepath.Join(permanentDir, entry.Name())
 				if entry.IsDir() {
 					copyDir(src, dst)
 				} else {
@@ -48,8 +54,8 @@ hop install copie la config dans ~/.hop/ et la rend persistante.`,
 			os.RemoveAll(sandboxDir)
 		}
 
-		// Mark as installed
-		os.WriteFile(permanentDir+"/.installed", []byte("installed\n"), 0600)
+		// Mark as installed (do this last — atomic state transition)
+		os.WriteFile(filepath.Join(permanentDir, ".installed"), []byte("installed\n"), 0600)
 
 		fmt.Println("→ hop installe en mode permanent")
 		fmt.Printf("  Config: %s\n", permanentDir)
