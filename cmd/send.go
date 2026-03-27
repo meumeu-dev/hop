@@ -62,7 +62,7 @@ func runSendURL(url string, machineName string, machine config.Machine) {
 
 	dest := sendToFlag
 	if dest == "" {
-		dest = "~/hop-received/"
+		dest = "hop-received/"
 	}
 
 	// Shell-escape both URL and dest to prevent injection
@@ -102,7 +102,7 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 
 	dest := sendToFlag
 	if dest == "" {
-		dest = "~/hop-received/"
+		dest = "hop-received/"
 	}
 
 	// Ensure remote destination directory exists (shell-escaped)
