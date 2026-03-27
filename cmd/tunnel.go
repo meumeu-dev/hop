@@ -284,7 +284,7 @@ func runPinggyTunnel() error {
 	// We capture stderr to detect the assigned URL, stdout goes to terminal
 	sshArgs := []string{
 		"-p", "443",
-		"-o", "StrictHostKeyChecking=no",
+		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "ServerAliveInterval=30",
 		"-R", "0:localhost:22",
 		"tcp@a.pinggy.io",
@@ -408,7 +408,7 @@ func ensureNgrok() (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("ecriture ngrok: %w", err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			if _, err := io.Copy(f, io.LimitReader(tr, 100<<20)); err != nil { // 100MB max
 				f.Close()
 				return "", fmt.Errorf("ecriture ngrok: %w", err)
 			}

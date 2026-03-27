@@ -15,19 +15,6 @@ import (
 var sendToFlag string
 var receiveToFlag string
 
-// scpArgs builds the scp arguments for a given target, using the hop key and
-// optionally the cloudflared ProxyCommand for CF tunnel targets.
-func scpArgs(viaTunnel bool) []string {
-	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
-	args := []string{"-i", hopKeyPath}
-	if viaTunnel {
-		cfPath := cloudflared.Path()
-		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
-	}
-	// Pass through progress and accept new host keys
-	args = append(args, "-o", "StrictHostKeyChecking=accept-new")
-	return args
-}
 
 var sendCmd = &cobra.Command{
 	Use:   "send <machine> <file-dir-or-url>",
@@ -66,6 +53,10 @@ hop send rpi fichier.txt --to /opt/   # destination custom`,
 	},
 }
 
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func runSendURL(url string, machineName string, machine config.Machine) {
 	target, viaTunnel := detectTarget(machine)
 
@@ -74,14 +65,17 @@ func runSendURL(url string, machineName string, machine config.Machine) {
 		dest = "~/hop-received/"
 	}
 
-	// Remote command: mkdir + curl (fallback wget)
-	remoteCmd := fmt.Sprintf("mkdir -p %s && cd %s && (curl -sSLO '%s' || wget -q '%s')",
-		dest, dest, url, url)
+	// Shell-escape both URL and dest to prevent injection
+	safeDest := shellEscape(dest)
+	safeURL := shellEscape(url)
+
+	remoteCmd := fmt.Sprintf("mkdir -p %s && cd %s && (curl -sSLO %s || wget -q %s)",
+		safeDest, safeDest, safeURL, safeURL)
 
 	fmt.Printf("→ Telechargement de %s sur %s\n", url, machineName)
 
-	sshCmdArgs := buildSSHArgs(target, viaTunnel)
-	sshCmdArgs = append(sshCmdArgs, target, "--", remoteCmd)
+	sshCmdArgs, cleanTarget := buildSSHArgs(target, viaTunnel)
+	sshCmdArgs = append(sshCmdArgs, cleanTarget, "--", remoteCmd)
 
 	sh := exec.Command("ssh", sshCmdArgs...)
 	sh.Stdin = os.Stdin
@@ -111,16 +105,15 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 		dest = "~/hop-received/"
 	}
 
-	remoteTarget := fmt.Sprintf("%s:%s", target, dest)
-
-	// Ensure remote destination directory exists
-	mkdirArgs := buildSSHArgs(target, viaTunnel)
-	mkdirArgs = append(mkdirArgs, target, "--", "mkdir", "-p", dest)
+	// Ensure remote destination directory exists (shell-escaped)
+	mkdirArgs, mkdirTarget := buildSSHArgs(target, viaTunnel)
+	mkdirArgs = append(mkdirArgs, mkdirTarget, "--", "mkdir", "-p", shellEscape(dest))
 	mkdirCmd := exec.Command("ssh", mkdirArgs...)
 	mkdirCmd.Stderr = os.Stderr
 	_ = mkdirCmd.Run()
 
-	scpBaseArgs := scpArgs(viaTunnel)
+	scpBaseArgs, scpTarget := buildSCPArgs(viaTunnel, target)
+	remoteTarget := fmt.Sprintf("%s:%s", scpTarget, dest)
 	if info.IsDir() {
 		scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
 	}
@@ -142,15 +135,57 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 	fmt.Printf("→ Transfert termine.\n")
 }
 
-// buildSSHArgs builds SSH args with hop key + tunnel proxy if needed
-func buildSSHArgs(target string, viaTunnel bool) []string {
+// splitHostPort splits user@host:port into (user@host, port) for quick tunnels
+func splitTargetPort(target string) (string, string) {
+	// Find the @ to separate user from host:port
+	atIdx := strings.LastIndex(target, "@")
+	if atIdx < 0 {
+		return target, ""
+	}
+	hostPart := target[atIdx+1:]
+	// Check for host:port
+	if colonIdx := strings.LastIndex(hostPart, ":"); colonIdx > 0 {
+		host := hostPart[:colonIdx]
+		port := hostPart[colonIdx+1:]
+		// Verify it's a port number
+		if port != "" && port != "22" {
+			return target[:atIdx+1] + host, port
+		}
+	}
+	return target, ""
+}
+
+// buildSSHArgs builds SSH args with hop key + tunnel proxy + port if needed
+// Returns (args, cleanTarget) where cleanTarget has port stripped
+func buildSSHArgs(target string, viaTunnel bool) ([]string, string) {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
 	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
 		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
 	}
-	return args
+	cleanTarget := target
+	if ct, port := splitTargetPort(target); port != "" {
+		args = append(args, "-p", port)
+		cleanTarget = ct
+	}
+	return args, cleanTarget
+}
+
+// buildSCPArgs builds SCP args (uses -P for port instead of -p)
+func buildSCPArgs(viaTunnel bool, target string) ([]string, string) {
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
+	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
+	if viaTunnel {
+		cfPath := cloudflared.Path()
+		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+	}
+	cleanTarget := target
+	if ct, port := splitTargetPort(target); port != "" {
+		args = append(args, "-P", port)
+		cleanTarget = ct
+	}
+	return args, cleanTarget
 }
 
 var receiveCmd = &cobra.Command{
@@ -183,10 +218,8 @@ hop receive rpi /opt/data/ --to ~/tmp  # destination custom`,
 			dest = "."
 		}
 
-		src := fmt.Sprintf("%s:%s", target, remotePath)
-
-		scpBaseArgs := scpArgs(viaTunnel)
-		// Use -r to support directories transparently
+		scpBaseArgs, scpTarget := buildSCPArgs(viaTunnel, target)
+		src := fmt.Sprintf("%s:%s", scpTarget, remotePath)
 		scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
 		scpBaseArgs = append(scpBaseArgs, src, dest)
 
