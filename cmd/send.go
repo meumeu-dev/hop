@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,7 +123,26 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 		dest = "hop-received/"
 	}
 
-	// Ensure remote destination directory exists (shell-escaped)
+	// Check remote disk space BEFORE anything
+	fileSize := info.Size()
+	checkArgs, checkTarget := buildSSHArgs(target, viaTunnel)
+	checkArgs = append(checkArgs, checkTarget, "--", "df", "--output=avail", "-B1", shellEscape(dest), "2>/dev/null", "|", "tail", "-1")
+	if out, err := exec.Command("ssh", checkArgs...).Output(); err == nil {
+		avail := strings.TrimSpace(string(out))
+		if availBytes, err := strconv.ParseInt(avail, 10, 64); err == nil {
+			if availBytes < fileSize {
+				fmt.Fprintf(os.Stderr, "Erreur: pas assez d'espace sur %s (%s dispo, %s requis)\n",
+					machineName, formatSize(availBytes), formatSize(fileSize))
+				os.Exit(1)
+			}
+			if availBytes < fileSize*2 {
+				fmt.Printf("⚠ Espace limite sur %s (%s dispo pour %s)\n",
+					machineName, formatSize(availBytes), formatSize(fileSize))
+			}
+		}
+	}
+
+	// Create remote dir after space check passed
 	mkdirArgs, mkdirTarget := buildSSHArgs(target, viaTunnel)
 	mkdirArgs = append(mkdirArgs, mkdirTarget, "--", "mkdir", "-p", shellEscape(dest))
 	mkdirCmd := exec.Command("ssh", mkdirArgs...)
@@ -136,7 +156,6 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 	}
 	scpBaseArgs = append(scpBaseArgs, src, remoteTarget)
 
-	fileSize := info.Size()
 	fmt.Printf("→ Envoi de '%s' (%s) vers %s:%s\n", src, formatSize(fileSize), machineName, dest)
 
 	start := time.Now()
