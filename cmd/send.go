@@ -1,7 +1,10 @@
 package cmd
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,6 +154,42 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 	elapsed := time.Since(start)
 	speed := float64(fileSize) / elapsed.Seconds() / 1024 / 1024
 	fmt.Printf("→ Transfert termine en %s (%.1f MB/s)\n", elapsed.Round(time.Millisecond), speed)
+
+	// Integrity check: compare local and remote checksums
+	if !info.IsDir() {
+		fmt.Print("→ Verification integrite...")
+		localHash := localMD5(src)
+		if localHash != "" {
+			remotePath := dest + filepath.Base(src)
+			remoteHashArgs, rhTarget := buildSSHArgs(target, viaTunnel)
+			remoteHashArgs = append(remoteHashArgs, rhTarget, "--", "md5sum", shellEscape(remotePath))
+			out, err := exec.Command("ssh", remoteHashArgs...).Output()
+			if err == nil {
+				remoteHash := strings.Fields(string(out))
+				if len(remoteHash) > 0 && remoteHash[0] == localHash {
+					fmt.Println(" OK (MD5 identique)")
+				} else {
+					fmt.Println(" ERREUR (checksums differents !)")
+					fmt.Fprintf(os.Stderr, "  Local:  %s\n  Distant: %s\n", localHash, string(out))
+				}
+			} else {
+				fmt.Println(" (verification impossible)")
+			}
+		}
+	}
+}
+
+func localMD5(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := md5.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // splitHostPort splits user@host:port into (user@host, port) for quick tunnels
