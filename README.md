@@ -44,6 +44,8 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | `hop ssh <machine>` | Connexion SSH (auto LAN/tunnel) |
 | `hop ping [machine]` | Verifie l'etat des machines |
 | `hop list` | Liste machines, services, aliases |
+| `hop send <machine> <fichier-ou-url>` | Envoie fichier ou telecharge URL sur la machine |
+| `hop receive <machine> <chemin>` | Recoit un fichier depuis la machine |
 
 ### Pairing
 | Commande | Description |
@@ -69,6 +71,7 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | `hop config --env <fichier-ou-url>` | Importe un .env CF |
 | `hop config --show` | Affiche la config actuelle |
 | `hop tunnel setup` | Cree un tunnel Cloudflare permanent |
+| `hop tunnel quick` | Tunnel rapide (Pinggy/ngrok, zero config CF) |
 | `hop tunnel status` | Status des tunnels |
 
 ### Sauvegarde

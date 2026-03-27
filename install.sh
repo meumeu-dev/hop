@@ -42,4 +42,4 @@ fi
 
 echo "→ hop $LATEST installe dans $INSTALL_DIR/hop"
 echo ""
-echo "Demarrage: hop init"
+echo "Demarrage: hop config"
