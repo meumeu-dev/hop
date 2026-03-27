@@ -239,8 +239,39 @@ func isHostPort(s string) bool {
 	return err == nil && host != "" && port != "" && port != "22"
 }
 
+var forceMode string // "", "lan", "tunnel"
+
 func detectTarget(m config.Machine) (target string, viaTunnel bool) {
-	// 1. Try LAN
+	// Force LAN
+	if forceMode == "lan" {
+		if m.IP != "" {
+			fmt.Printf("→ Connexion LAN forcee (%s)\n", m.IP)
+			return m.User + "@" + m.IP, false
+		}
+		fmt.Fprintln(os.Stderr, "Pas d'IP configuree pour cette machine.")
+		os.Exit(1)
+	}
+
+	// Force tunnel
+	if forceMode == "tunnel" {
+		if m.Tunnel != "" {
+			if isHostPort(m.Tunnel) {
+				host, port, _ := net.SplitHostPort(m.Tunnel)
+				fmt.Printf("→ Tunnel force (%s)\n", m.Tunnel)
+				return m.User + "@" + host + ":" + port, false
+			}
+			if _, err := cloudflared.EnsureInstalled(); err != nil {
+				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("→ Tunnel force (%s)\n", m.Tunnel)
+			return m.User + "@" + m.Tunnel, true
+		}
+		fmt.Fprintln(os.Stderr, "Pas de tunnel configure pour cette machine.")
+		os.Exit(1)
+	}
+
+	// Auto: try LAN first
 	if m.IP != "" {
 		conn, err := net.DialTimeout("tcp", m.IP+":22", 500*time.Millisecond)
 		if err == nil {
@@ -381,4 +412,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&tmuxFlag, "tmux", false, "Lance dans tmux")
 	rootCmd.Flags().StringVarP(&sessionFlag, "session", "s", "", "Nom de la session tmux")
 	rootCmd.Flags().BoolVar(&noPermFlag, "noperm", false, "Lance Claude sans permissions")
+
+	// Global persistent flags for connection mode
+	rootCmd.PersistentFlags().StringVar(&forceMode, "via", "", "Force le mode de connexion: lan ou tunnel")
 }
