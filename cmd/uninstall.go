@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
@@ -13,27 +14,26 @@ import (
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall",
-	Short: "Supprime hop completement (binaire + config + services)",
+	Short: "Nucleaire: supprime TOUT (config + binaire + services + cloudflared)",
 	Run: func(cmd *cobra.Command, args []string) {
 		hopDir := config.HopDir()
 		permanentDir := config.PermanentDir()
 		execPath, _ := os.Executable()
+		home, _ := os.UserHomeDir()
+		cloudflaredDir := filepath.Join(home, ".cloudflared")
 
-		fmt.Println("Ceci va supprimer:")
-		if config.IsInstalled() {
+		fmt.Println("Ceci va TOUT supprimer:")
+		fmt.Printf("  %s (config sandbox)\n", hopDir)
+		if permanentDir != hopDir {
 			fmt.Printf("  %s (config permanente)\n", permanentDir)
 		}
-		if hopDir != permanentDir {
-			fmt.Printf("  %s (config sandbox)\n", hopDir)
-		}
+		fmt.Printf("  %s (cloudflared)\n", cloudflaredDir)
 		fmt.Printf("  %s (binaire)\n", execPath)
-		if config.IsInstalled() {
-			fmt.Println("  Service cloudflared (si installe)")
-		}
+		fmt.Println("  Service cloudflared (si installe)")
 		fmt.Println()
 
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Confirmer la suppression ? [oui/N]: ")
+		fmt.Print("Confirmer la suppression TOTALE ? [oui/N]: ")
 		confirm, _ := reader.ReadString('\n')
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 
@@ -42,59 +42,43 @@ var uninstallCmd = &cobra.Command{
 			return
 		}
 
-		hasError := false
-
-		// Stop and remove cloudflared service if installed
-		if config.IsInstalled() {
-			exec.Command("sudo", "cloudflared", "service", "uninstall").Run()
-		}
+		// Stop and remove cloudflared service
+		exec.Command("sudo", "cloudflared", "service", "uninstall").Run()
+		exec.Command("sudo", "systemctl", "stop", "cloudflared").Run()
 
 		// Remove sandbox dir
-		if err := os.RemoveAll(hopDir); err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", hopDir, err)
-			hasError = true
-		} else {
-			fmt.Printf("→ %s supprime\n", hopDir)
-		}
+		os.RemoveAll(hopDir)
+		fmt.Printf("→ %s supprime\n", hopDir)
 
-		// Remove permanent dir (if different)
+		// Remove permanent dir
 		if permanentDir != hopDir {
-			if _, err := os.Stat(permanentDir); err == nil {
-				if err := os.RemoveAll(permanentDir); err != nil {
-					fmt.Fprintf(os.Stderr, "Erreur suppression %s: %v\n", permanentDir, err)
-					hasError = true
-				} else {
-					fmt.Printf("→ %s supprime\n", permanentDir)
-				}
-			}
+			os.RemoveAll(permanentDir)
+			fmt.Printf("→ %s supprime\n", permanentDir)
 		}
 
-		// Remove binary
+		// Remove cloudflared config
+		os.RemoveAll(cloudflaredDir)
+		fmt.Printf("→ %s supprime\n", cloudflaredDir)
+
+		// Remove cloudflared binary if in ~/.hop/bin/
+		hopBin := filepath.Join(permanentDir, "bin", "cloudflared")
+		os.Remove(hopBin)
+		sandboxBin := filepath.Join(hopDir, "bin", "cloudflared")
+		os.Remove(sandboxBin)
+
+		// Remove hop binary
 		if err := os.Remove(execPath); err != nil {
 			if os.IsPermission(err) {
-				fmt.Printf("→ Suppression de %s (sudo)...\n", execPath)
 				sudoCmd := exec.Command("sudo", "rm", execPath)
 				sudoCmd.Stdin = os.Stdin
 				sudoCmd.Stdout = os.Stdout
 				sudoCmd.Stderr = os.Stderr
-				if sudoErr := sudoCmd.Run(); sudoErr != nil {
-					fmt.Fprintf(os.Stderr, "Erreur: %v\n", sudoErr)
-					hasError = true
-				} else {
-					fmt.Printf("→ %s supprime\n", execPath)
-				}
-			} else {
-				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-				hasError = true
+				sudoCmd.Run()
 			}
-		} else {
-			fmt.Printf("→ %s supprime\n", execPath)
 		}
+		fmt.Printf("→ %s supprime\n", execPath)
 
-		if hasError {
-			os.Exit(1)
-		}
-		fmt.Println("→ hop desinstalle. Zero trace.")
+		fmt.Println("\n→ hop desinstalle. Zero trace.")
 	},
 }
 
