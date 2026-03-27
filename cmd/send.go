@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
@@ -51,6 +52,19 @@ hop send rpi fichier.txt --to /opt/   # destination custom`,
 
 		runSendFile(src, machineName, machine)
 	},
+}
+
+func formatSize(b int64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(b)/float64(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(b)/float64(1<<10))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func shellEscape(s string) string {
@@ -119,8 +133,10 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 	}
 	scpBaseArgs = append(scpBaseArgs, src, remoteTarget)
 
-	fmt.Printf("→ Envoi de '%s' vers %s:%s\n", src, machineName, dest)
+	fileSize := info.Size()
+	fmt.Printf("→ Envoi de '%s' (%s) vers %s:%s\n", src, formatSize(fileSize), machineName, dest)
 
+	start := time.Now()
 	sh := exec.Command("scp", scpBaseArgs...)
 	sh.Stdin = os.Stdin
 	sh.Stdout = os.Stdout
@@ -132,7 +148,9 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 		fmt.Fprintf(os.Stderr, "Erreur scp: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("→ Transfert termine.\n")
+	elapsed := time.Since(start)
+	speed := float64(fileSize) / elapsed.Seconds() / 1024 / 1024
+	fmt.Printf("→ Transfert termine en %s (%.1f MB/s)\n", elapsed.Round(time.Millisecond), speed)
 }
 
 // splitHostPort splits user@host:port into (user@host, port) for quick tunnels
@@ -225,6 +243,7 @@ hop receive rpi /opt/data/ --to ~/tmp  # destination custom`,
 
 		fmt.Printf("→ Reception de '%s' depuis %s vers '%s'\n", remotePath, machineName, dest)
 
+		start := time.Now()
 		sh := exec.Command("scp", scpBaseArgs...)
 		sh.Stdin = os.Stdin
 		sh.Stdout = os.Stdout
@@ -236,7 +255,8 @@ hop receive rpi /opt/data/ --to ~/tmp  # destination custom`,
 			fmt.Fprintf(os.Stderr, "Erreur scp: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("→ Transfert termine.\n")
+		elapsed := time.Since(start)
+		fmt.Printf("→ Transfert termine en %s\n", elapsed.Round(time.Millisecond))
 	},
 }
 
