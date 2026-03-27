@@ -29,13 +29,27 @@ var initCmd = &cobra.Command{
 		}
 
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Configurer Cloudflare maintenant ? (pour les tunnels) [o/N]: ")
+		fmt.Println("Configurer Cloudflare ? (pour les tunnels)")
+		fmt.Println("  1) Non, plus tard")
+		fmt.Println("  2) Oui, interactif")
+		fmt.Println("  3) Importer un fichier .env (local ou URL)")
+		fmt.Print("Choix [1]: ")
 		choice, _ := reader.ReadString('\n')
-		choice = strings.TrimSpace(strings.ToLower(choice))
+		choice = strings.TrimSpace(choice)
 
-		if choice == "o" || choice == "oui" || choice == "y" || choice == "yes" {
+		if choice == "2" || choice == "o" || choice == "oui" {
 			fmt.Println()
 			configCFCmd.Run(cmd, nil)
+		} else if choice == "3" {
+			fmt.Print("Chemin ou URL du fichier .env: ")
+			envPath, _ := reader.ReadString('\n')
+			envPath = strings.TrimSpace(envPath)
+			if envPath != "" {
+				cfEnvFile = envPath
+				fmt.Println()
+				configCFCmd.Run(cmd, nil)
+				cfEnvFile = "" // reset
+			}
 		} else {
 			cfg, _ := config.Load()
 			if cfg != nil {
