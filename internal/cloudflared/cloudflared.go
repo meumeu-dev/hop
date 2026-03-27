@@ -1,6 +1,9 @@
 package cloudflared
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -17,7 +20,11 @@ import (
 )
 
 func BinPath() string {
-	return filepath.Join(config.HopDir(), "bin", "cloudflared")
+	name := "cloudflared"
+	if runtime.GOOS == "windows" {
+		name = "cloudflared.exe"
+	}
+	return filepath.Join(config.HopDir(), "bin", name)
 }
 
 // Path returns the path to cloudflared, checking system then local
@@ -37,6 +44,30 @@ func IsInstalled() bool {
 	return Path() != ""
 }
 
+// extractFromTgz extracts the first regular file from a gzip-compressed tar archive.
+func extractFromTgz(data []byte) ([]byte, error) {
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tar: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeReg && hdr.Size > 0 {
+			return io.ReadAll(io.LimitReader(tr, 200<<20))
+		}
+	}
+	return nil, fmt.Errorf("aucun fichier trouvé dans l'archive")
+}
+
 // Install downloads cloudflared to ~/.hop/bin/ with checksum verification
 func Install() error {
 	binDir := filepath.Join(config.HopDir(), "bin")
@@ -45,16 +76,25 @@ func Install() error {
 	}
 
 	arch := runtime.GOARCH
+	goos := runtime.GOOS
 
-	binaryName := fmt.Sprintf("cloudflared-linux-%s", arch)
-	binaryURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", binaryName)
-	checksumURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s.sha256", binaryName)
+	var assetName string
+	switch goos {
+	case "windows":
+		assetName = fmt.Sprintf("cloudflared-windows-%s.exe", arch)
+	case "darwin":
+		assetName = fmt.Sprintf("cloudflared-darwin-%s.tgz", arch)
+	default:
+		assetName = fmt.Sprintf("cloudflared-%s-%s", goos, arch)
+	}
+	assetURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s", assetName)
+	checksumURL := fmt.Sprintf("https://github.com/cloudflare/cloudflared/releases/latest/download/%s.sha256", assetName)
 
-	fmt.Printf("→ Téléchargement de cloudflared (%s)...\n", arch)
+	fmt.Printf("→ Téléchargement de cloudflared (%s/%s)...\n", goos, arch)
 
-	// Download binary
+	// Download asset
 	httpClient := &http.Client{Timeout: 120 * time.Second}
-	resp, err := httpClient.Get(binaryURL)
+	resp, err := httpClient.Get(assetURL)
 	if err != nil {
 		return fmt.Errorf("erreur téléchargement: %w", err)
 	}
@@ -69,7 +109,7 @@ func Install() error {
 		return fmt.Errorf("erreur téléchargement: %w", err)
 	}
 
-	// Try to verify checksum
+	// Try to verify checksum (best-effort; not available for darwin tgz)
 	checksumResp, err := http.Get(checksumURL)
 	if err == nil && checksumResp.StatusCode == 200 {
 		checksumData, err := io.ReadAll(io.LimitReader(checksumResp.Body, 1024))
@@ -88,8 +128,23 @@ func Install() error {
 		}
 	}
 
+	// Extract binary from tgz on macOS; write downloaded bytes directly otherwise
+	var binaryData []byte
+	if goos == "darwin" {
+		binaryData, err = extractFromTgz(data)
+		if err != nil {
+			return fmt.Errorf("erreur extraction archive: %w", err)
+		}
+	} else {
+		binaryData = data
+	}
+
 	dst := BinPath()
-	if err := os.WriteFile(dst, data, 0755); err != nil {
+	perm := os.FileMode(0755)
+	if goos == "windows" {
+		perm = 0666
+	}
+	if err := os.WriteFile(dst, binaryData, perm); err != nil {
 		return fmt.Errorf("erreur écriture: %w", err)
 	}
 

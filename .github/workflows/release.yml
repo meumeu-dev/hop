@@ -24,6 +24,15 @@ jobs:
             goarch: arm
             goarm: "7"
             name: hop-linux-arm32
+          - goos: darwin
+            goarch: amd64
+            name: hop-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            name: hop-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            name: hop-windows-amd64.exe
 
     steps:
       - uses: actions/checkout@v4

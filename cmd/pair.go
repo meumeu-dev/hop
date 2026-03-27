@@ -615,6 +615,8 @@ func copyToClipboard(text string) error {
 		cmd = exec.Command("xclip", "-selection", "clipboard")
 	case "darwin":
 		cmd = exec.Command("pbcopy")
+	case "windows":
+		cmd = exec.Command("clip")
 	default:
 		return fmt.Errorf("unsupported")
 	}

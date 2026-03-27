@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -118,9 +119,20 @@ func IsInstalled() bool {
 }
 
 // HopDir returns the config directory
+// Windows: always %LOCALAPPDATA%\hop
 // Sandbox mode (default): /tmp/hop-<uid>/
 // Installed mode: ~/.hop/
 func HopDir() string {
+	// On Windows, always use %LOCALAPPDATA%\hop (no sandbox/uid concept)
+	if runtime.GOOS == "windows" {
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			home, _ := os.UserHomeDir()
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
+		return filepath.Join(localAppData, "hop")
+	}
+
 	home, _ := os.UserHomeDir()
 	installedDir := filepath.Join(home, ".hop")
 

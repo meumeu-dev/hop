@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ En mode installe (hop install), utilise hop uninstall a la place.`,
 		execPath, _ := os.Executable()
 		binRemoved := false
 		if err := os.Remove(execPath); err != nil {
-			if os.IsPermission(err) {
+			if os.IsPermission(err) && runtime.GOOS != "windows" {
 				sudoCmd := exec.Command("sudo", "rm", execPath)
 				sudoCmd.Stdin = os.Stdin
 				sudoCmd.Stdout = os.Stdout

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/meumeu-dev/hop/internal/config"
@@ -42,9 +43,11 @@ var uninstallCmd = &cobra.Command{
 			return
 		}
 
-		// Stop and remove cloudflared service
-		exec.Command("sudo", "cloudflared", "service", "uninstall").Run()
-		exec.Command("sudo", "systemctl", "stop", "cloudflared").Run()
+		// Stop and remove cloudflared service (Linux/macOS only)
+		if runtime.GOOS != "windows" {
+			exec.Command("sudo", "cloudflared", "service", "uninstall").Run()
+			exec.Command("sudo", "systemctl", "stop", "cloudflared").Run()
+		}
 
 		// Remove sandbox dir
 		os.RemoveAll(hopDir)
@@ -61,14 +64,18 @@ var uninstallCmd = &cobra.Command{
 		fmt.Printf("→ %s supprime\n", cloudflaredDir)
 
 		// Remove cloudflared binary if in ~/.hop/bin/
-		hopBin := filepath.Join(permanentDir, "bin", "cloudflared")
+		cfBinName := "cloudflared"
+		if runtime.GOOS == "windows" {
+			cfBinName = "cloudflared.exe"
+		}
+		hopBin := filepath.Join(permanentDir, "bin", cfBinName)
 		os.Remove(hopBin)
-		sandboxBin := filepath.Join(hopDir, "bin", "cloudflared")
+		sandboxBin := filepath.Join(hopDir, "bin", cfBinName)
 		os.Remove(sandboxBin)
 
 		// Remove hop binary
 		if err := os.Remove(execPath); err != nil {
-			if os.IsPermission(err) {
+			if os.IsPermission(err) && runtime.GOOS != "windows" {
 				sudoCmd := exec.Command("sudo", "rm", execPath)
 				sudoCmd.Stdin = os.Stdin
 				sudoCmd.Stdout = os.Stdout

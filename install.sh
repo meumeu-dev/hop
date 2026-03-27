@@ -8,14 +8,31 @@ set -euo pipefail
 REPO="meumeu-dev/hop"
 INSTALL_DIR="/usr/local/bin"
 
+# Detect OS
+OS=$(uname -s)
+case "$OS" in
+    Linux)  OS_NAME="linux" ;;
+    Darwin) OS_NAME="darwin" ;;
+    *)      echo "OS non supporte: $OS"; exit 1 ;;
+esac
+
 # Detect arch
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64)  BINARY="hop-linux-amd64" ;;
-    aarch64) BINARY="hop-linux-arm64" ;;
-    armv7l)  BINARY="hop-linux-arm32" ;;
+    x86_64)  ARCH_NAME="amd64" ;;
+    aarch64) ARCH_NAME="arm64" ;;
+    arm64)   ARCH_NAME="arm64" ;;
+    armv7l)  ARCH_NAME="arm32" ;;
     *)       echo "Architecture non supportee: $ARCH"; exit 1 ;;
 esac
+
+# arm32 only exists for linux
+if [ "$OS_NAME" = "darwin" ] && [ "$ARCH_NAME" = "arm32" ]; then
+    echo "Architecture non supportee sur macOS: $ARCH"
+    exit 1
+fi
+
+BINARY="hop-${OS_NAME}-${ARCH_NAME}"
 
 echo "→ Detection de la derniere version..."
 LATEST=$(curl -sSf "https://api.github.com/repos/$REPO/releases/latest" | grep -o '"tag_name": *"[^"]*"' | cut -d'"' -f4)
