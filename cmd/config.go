@@ -93,6 +93,30 @@ func runConfigCF() {
 	var envContent string
 	var domain string
 
+	// Ask for env file if not provided via flag
+	if cfEnvFile == "" {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Println("Configuration Cloudflare:")
+		fmt.Println("  1) J'ai un fichier .env (local ou URL)")
+		fmt.Println("  2) Saisie manuelle")
+		fmt.Println("  3) Skip (configurer plus tard)")
+		fmt.Print("Choix [2]: ")
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(choice)
+
+		if choice == "1" {
+			fmt.Print("Chemin ou URL du fichier .env: ")
+			envPath, _ := reader.ReadString('\n')
+			cfEnvFile = strings.TrimSpace(envPath)
+		} else if choice == "3" {
+			cfg.Save()
+			fmt.Println("\n→ hop pret (sans Cloudflare).")
+			fmt.Println("  hop config pour configurer plus tard.")
+			fmt.Println("  hop pair pour pairer en LAN.")
+			return
+		}
+	}
+
 	if cfEnvFile != "" {
 		envContent, err = loadEnvFrom(cfEnvFile)
 		if err != nil {
