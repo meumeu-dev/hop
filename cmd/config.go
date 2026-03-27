@@ -140,7 +140,14 @@ func runConfigCF() {
 			os.Exit(1)
 		}
 
+		fmt.Print("Account ID Cloudflare (optionnel, pour Workers AI): ")
+		accountID, _ := reader.ReadString('\n')
+		accountID = strings.TrimSpace(accountID)
+
 		envContent = fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", email, domain, apiKey)
+		if accountID != "" {
+			envContent += fmt.Sprintf("CF_ACCOUNT_ID=%s\n", accountID)
+		}
 
 		// Ask for custom worker URL
 		fmt.Printf("Worker relay [%s]: ", pairing.DefaultWorkerURL)

@@ -17,6 +17,7 @@ type Config struct {
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
 	WorkerURL  string             `yaml:"worker_url,omitempty"`
+	AIEnabled  bool               `yaml:"ai_enabled,omitempty"`
 }
 
 type Machine struct {
@@ -216,8 +217,7 @@ func Init() error {
 		cfg := &Config{
 			Machines: make(map[string]Machine),
 			Services: map[string]Service{
-				"ssh":      {Desc: "Connexion SSH", Builtin: true},
-				"rustdesk": {Desc: "Connexion Rustdesk", Builtin: true},
+				"ssh": {Desc: "Connexion SSH", Builtin: true},
 			},
 		}
 		return cfg.Save()
