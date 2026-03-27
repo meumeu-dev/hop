@@ -252,7 +252,7 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 
 	// 2. Try configured tunnel
 	if m.Tunnel != "" {
-		// Quick tunnel: host:port format (Pinggy/ngrok)
+		// Quick tunnel: host:port format (Pinggy)
 		if isHostPort(m.Tunnel) {
 			host, port, _ := net.SplitHostPort(m.Tunnel)
 			fmt.Printf("→ Connexion via tunnel rapide (%s)\n", m.Tunnel)
@@ -273,7 +273,7 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	fmt.Fprintln(os.Stderr, "Aucune connexion disponible.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "La machine n'est pas joignable en LAN et aucun tunnel n'est configure.")
-	fmt.Fprintln(os.Stderr, "Pour l'acces distant: hop tunnel setup (Cloudflare) ou hop tunnel quick (Pinggy/ngrok)")
+	fmt.Fprintln(os.Stderr, "Pour l'acces distant: hop tunnel setup (Cloudflare) ou hop tunnel quick (Pinggy)")
 	os.Exit(1)
 	return "", false
 }

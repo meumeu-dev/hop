@@ -1,18 +1,13 @@
 package cmd
 
 import (
-	"archive/tar"
 	"bufio"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -218,56 +213,16 @@ func loadEnvFile(path string) {
 
 var tunnelQuickCmd = &cobra.Command{
 	Use:   "quick",
-	Short: "Lance un tunnel rapide (Pinggy ou ngrok) sans configuration permanente",
-	Long: `Lance un tunnel TCP rapide pour exposer le SSH de cette machine.
-
-Providers disponibles:
-  1) Pinggy  — zero install, SSH natif, gratuit, timeout 60min
-  2) ngrok   — necessite le binaire ngrok, gratuit, session 2h, 1GB/mois`,
+	Short: "Lance un tunnel SSH rapide via Pinggy (zero install, zero compte)",
+	Long: `Lance un tunnel TCP temporaire via Pinggy pour exposer le SSH de cette machine.
+Zero install, zero compte requis. Timeout: 60 minutes (version gratuite).
+Pour un tunnel permanent, utilise: hop tunnel setup (Cloudflare)`,
 	Run: func(cmd *cobra.Command, args []string) {
-		runTunnelQuick()
-	},
-}
-
-func runTunnelQuick() {
-	fmt.Println("┌─────────────────────────────────────────────┐")
-	fmt.Println("│         hop tunnel quick                    │")
-	fmt.Println("│  Tunnel SSH temporaire — zero config        │")
-	fmt.Println("└─────────────────────────────────────────────┘")
-	fmt.Println()
-	fmt.Println("Choix du provider:")
-	fmt.Println("  1) Pinggy  [defaut] — zero install, SSH, gratuit, 60min")
-	fmt.Println("  2) ngrok            — binaire requis, gratuit, 2h, 1GB/mois")
-	fmt.Println()
-	fmt.Print("Provider [1]: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	choice, _ := reader.ReadString('\n')
-	choice = strings.TrimSpace(choice)
-
-	switch choice {
-	case "", "1", "pinggy":
 		if err := runPinggyTunnel(); err != nil {
-			fmt.Fprintf(os.Stderr, "\nErreur Pinggy: %v\n", err)
-			fmt.Println("\nEssai avec ngrok...")
-			if err2 := runNgrokTunnel(); err2 != nil {
-				fmt.Fprintf(os.Stderr, "Erreur ngrok: %v\n", err2)
-				os.Exit(1)
-			}
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
 		}
-	case "2", "ngrok":
-		if err := runNgrokTunnel(); err != nil {
-			fmt.Fprintf(os.Stderr, "\nErreur ngrok: %v\n", err)
-			fmt.Println("\nEssai avec Pinggy...")
-			if err2 := runPinggyTunnel(); err2 != nil {
-				fmt.Fprintf(os.Stderr, "Erreur Pinggy: %v\n", err2)
-				os.Exit(1)
-			}
-		}
-	default:
-		fmt.Fprintln(os.Stderr, "Choix invalide. Utilise 1 (Pinggy) ou 2 (ngrok).")
-		os.Exit(1)
-	}
+	},
 }
 
 // ── Pinggy ────────────────────────────────────────────────────────────────────
@@ -331,162 +286,6 @@ func runPinggyTunnel() error {
 	}
 
 	return sshCmd.Wait()
-}
-
-// ── ngrok ─────────────────────────────────────────────────────────────────────
-
-func ngrokBinPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".hop", "bin", "ngrok")
-}
-
-func ngrokURL() string {
-	arch := runtime.GOARCH
-	switch arch {
-	case "amd64":
-		return "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
-	case "arm64":
-		return "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz"
-	case "arm":
-		return "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz"
-	default:
-		return "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
-	}
-}
-
-func ensureNgrok() (string, error) {
-	binPath := ngrokBinPath()
-
-	// Check system ngrok first
-	if systemNgrok, err := exec.LookPath("ngrok"); err == nil {
-		return systemNgrok, nil
-	}
-
-	// Check ~/.hop/bin/ngrok
-	if _, err := os.Stat(binPath); err == nil {
-		return binPath, nil
-	}
-
-	// Auto-install
-	fmt.Println("  ngrok non trouve. Installation automatique dans ~/.hop/bin/ngrok...")
-	url := ngrokURL()
-	fmt.Printf("  Telechargement: %s\n", url)
-
-	if err := os.MkdirAll(filepath.Dir(binPath), 0755); err != nil {
-		return "", fmt.Errorf("impossible de creer ~/.hop/bin: %w", err)
-	}
-
-	resp, err := http.Get(url) //nolint:gosec
-	if err != nil {
-		return "", fmt.Errorf("echec telechargement ngrok: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("telechargement ngrok: HTTP %d", resp.StatusCode)
-	}
-
-	// Extract tgz
-	gr, err := gzip.NewReader(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("decompression: %w", err)
-	}
-	defer gr.Close()
-
-	tr := tar.NewReader(gr)
-	found := false
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", fmt.Errorf("lecture archive: %w", err)
-		}
-		if hdr.Name == "ngrok" || strings.HasSuffix(hdr.Name, "/ngrok") {
-			f, err := os.OpenFile(binPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-			if err != nil {
-				return "", fmt.Errorf("ecriture ngrok: %w", err)
-			}
-			if _, err := io.Copy(f, io.LimitReader(tr, 100<<20)); err != nil { // 100MB max
-				f.Close()
-				return "", fmt.Errorf("ecriture ngrok: %w", err)
-			}
-			f.Close()
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return "", fmt.Errorf("binaire ngrok non trouve dans l'archive")
-	}
-
-	fmt.Printf("  ngrok installe: %s\n", binPath)
-	return binPath, nil
-}
-
-func runNgrokTunnel() error {
-	fmt.Println()
-	fmt.Println("→ Demarrage du tunnel ngrok...")
-
-	ngrokBin, err := ensureNgrok()
-	if err != nil {
-		return fmt.Errorf("ngrok: %w", err)
-	}
-
-	fmt.Println("  Timeout: ~2h (version gratuite), 1GB/mois.")
-	fmt.Println("  Ctrl+C pour arreter.")
-	fmt.Println()
-
-	// ngrok tcp 22 --log stdout --log-format json
-	ngrokArgs := []string{"tcp", "22", "--log", "stdout", "--log-format", "json"}
-	ngrokCmd := exec.Command(ngrokBin, ngrokArgs...)
-
-	stdoutPipe, err := ngrokCmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("pipe stdout: %w", err)
-	}
-	ngrokCmd.Stderr = os.Stderr
-	ngrokCmd.Stdin = os.Stdin
-
-	if err := ngrokCmd.Start(); err != nil {
-		return fmt.Errorf("impossible de lancer ngrok: %w", err)
-	}
-
-	// Parse JSON log output to find tunnel URL
-	// ngrok logs: {"addr":"tcp://0.tcp.ngrok.io:XXXXX","url":"tcp://0.tcp.ngrok.io:XXXXX",...}
-	urlFound := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(stdoutPipe)
-		reURL := regexp.MustCompile(`"url"\s*:\s*"tcp://([a-zA-Z0-9._-]+:\d+)"`)
-		reAddr := regexp.MustCompile(`"Addr"\s*:\s*"([a-zA-Z0-9._-]+:\d+)"`)
-		for scanner.Scan() {
-			line := scanner.Text()
-			// Only print non-JSON lines or key info to avoid clutter
-			if !strings.HasPrefix(strings.TrimSpace(line), "{") {
-				fmt.Println(line)
-			}
-			if m := reURL.FindStringSubmatch(line); m != nil {
-				urlFound <- m[1]
-			} else if m := reAddr.FindStringSubmatch(line); m != nil {
-				urlFound <- m[1]
-			}
-		}
-		close(urlFound)
-	}()
-
-	// Wait up to 15s for URL to appear
-	select {
-	case hostPort, ok := <-urlFound:
-		if ok && hostPort != "" {
-			displayQuickTunnelInfo("ngrok", hostPort)
-		}
-	case <-time.After(15 * time.Second):
-		fmt.Println("  (URL non detectee automatiquement — verifiez la sortie ci-dessus)")
-	}
-
-	return ngrokCmd.Wait()
 }
 
 // ── display ───────────────────────────────────────────────────────────────────

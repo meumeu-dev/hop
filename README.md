@@ -71,7 +71,7 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | `hop config --env <fichier-ou-url>` | Importe un .env CF |
 | `hop config --show` | Affiche la config actuelle |
 | `hop tunnel setup` | Cree un tunnel Cloudflare permanent |
-| `hop tunnel quick` | Tunnel rapide (Pinggy/ngrok, zero config CF) |
+| `hop tunnel quick` | Tunnel rapide via Pinggy (zero install, zero compte) |
 | `hop tunnel status` | Status des tunnels |
 
 ### Sauvegarde
