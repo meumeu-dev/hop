@@ -1,19 +1,21 @@
 package dashboard
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
-	"path/filepath"
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -139,6 +141,7 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/services/", handleServiceDelete)
 	mux.HandleFunc("/api/cloudflare", handleCloudflare)
 	mux.HandleFunc("/api/pair", handlePair)
+	mux.HandleFunc("/api/ai", handleAI)
 }
 
 func StartWithBind(port int, bind string, password string, open bool) error {
@@ -485,6 +488,302 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w)
+}
+
+// --- AI handler ---
+
+type aiReq struct {
+	Question string `json:"question"`
+}
+
+type aiResp struct {
+	Answer  string `json:"answer"`
+	Command string `json:"command,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
+const dashAISystemPrompt = `Tu es l'assistant hop. Tu connais la config de l'utilisateur. Tu peux repondre en texte ou proposer une commande hop a executer. Si tu proposes une commande, prefixe-la avec CMD: sur une ligne separee. Reponds de maniere concise et utile.`
+
+// dashSafeContext builds a context string from config, stripping secrets.
+func dashSafeContext(cfg *config.Config) string {
+	var sb strings.Builder
+	sb.WriteString("=== Config hop ===\n")
+	if config.IsInstalled() {
+		sb.WriteString("Mode: installe (~/.hop/)\n")
+	} else {
+		sb.WriteString("Mode: sandbox\n")
+	}
+	if len(cfg.Machines) > 0 {
+		sb.WriteString("\nMachines:\n")
+		for name, m := range cfg.Machines {
+			sb.WriteString(fmt.Sprintf("  %s: ip=%s user=%s", name, m.IP, m.User))
+			if m.Tunnel != "" {
+				sb.WriteString(fmt.Sprintf(" tunnel=%s", m.Tunnel))
+			}
+			if len(m.Services) > 0 {
+				var svcs []string
+				for svcName := range m.Services {
+					svcs = append(svcs, svcName)
+				}
+				sb.WriteString(fmt.Sprintf(" services=[%s]", strings.Join(svcs, ",")))
+			}
+			sb.WriteString("\n")
+		}
+	} else {
+		sb.WriteString("\nMachines: (aucune)\n")
+	}
+	if len(cfg.Services) > 0 {
+		sb.WriteString("\nServices:\n")
+		for name, svc := range cfg.Services {
+			sb.WriteString(fmt.Sprintf("  %s: %s", name, svc.Desc))
+			if svc.Cmd != "" {
+				sb.WriteString(fmt.Sprintf(" (cmd: %s)", svc.Cmd))
+			}
+			if svc.Builtin {
+				sb.WriteString(" [builtin]")
+			}
+			sb.WriteString("\n")
+		}
+	}
+	if len(cfg.Aliases) > 0 {
+		sb.WriteString("\nAliases:\n")
+		for alias, target := range cfg.Aliases {
+			sb.WriteString(fmt.Sprintf("  %s -> %s\n", alias, target))
+		}
+	}
+	if cfg.Cloudflare.Domain != "" {
+		sb.WriteString(fmt.Sprintf("\nCloudflare domain: %s\n", cfg.Cloudflare.Domain))
+	}
+	return sb.String()
+}
+
+// dashTryOllama checks if Ollama is running and returns the first available model.
+func dashTryOllama() (string, bool) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get("http://localhost:11434/api/tags")
+	if err != nil {
+		return "", false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", false
+	}
+	var result struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", false
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", false
+	}
+	for _, m := range result.Models {
+		if strings.HasPrefix(m.Name, "llama3") {
+			return m.Name, true
+		}
+	}
+	if len(result.Models) > 0 {
+		return result.Models[0].Name, true
+	}
+	return "", false
+}
+
+// dashAskOllama sends a prompt to Ollama and returns the response text.
+func dashAskOllama(model, prompt string) (string, error) {
+	payload := map[string]interface{}{
+		"model":  model,
+		"prompt": prompt,
+		"stream": false,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Post("http://localhost:11434/api/generate", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("ollama: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("ollama HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		Response string `json:"response"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse ollama response: %w", err)
+	}
+	return result.Response, nil
+}
+
+// dashLoadCFCredentials reads CF_ACCOUNT_ID and CF_API_KEY from cloudflare.env.
+func dashLoadCFCredentials(cfg *config.Config) (string, string, error) {
+	envPath := cfg.Cloudflare.EnvFile
+	if envPath == "" {
+		envPath = filepath.Join(config.HopDir(), "cloudflare.env")
+	}
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return "", "", err
+	}
+	var accountID, apiKey string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "CF_ACCOUNT_ID=") {
+			accountID = strings.TrimPrefix(line, "CF_ACCOUNT_ID=")
+		}
+		if strings.HasPrefix(line, "CF_API_KEY=") {
+			apiKey = strings.TrimPrefix(line, "CF_API_KEY=")
+		}
+	}
+	return accountID, apiKey, nil
+}
+
+// dashAskWorkersAI sends a prompt to Cloudflare Workers AI.
+func dashAskWorkersAI(accountID, apiKey, prompt string) (string, error) {
+	payload := map[string]interface{}{
+		"messages": []map[string]string{
+			{"role": "system", "content": dashAISystemPrompt},
+			{"role": "user", "content": prompt},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/meta/llama-3-8b-instruct", accountID)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("workers ai: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("workers ai HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	var result struct {
+		Result struct {
+			Response string `json:"response"`
+		} `json:"result"`
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("parse workers ai response: %w", err)
+	}
+	if !result.Success {
+		if len(result.Errors) > 0 {
+			return "", fmt.Errorf("workers ai: %s", result.Errors[0].Message)
+		}
+		return "", fmt.Errorf("workers ai: requete echouee")
+	}
+	return result.Result.Response, nil
+}
+
+// dashParseResponse splits the LLM response into text + optional CMD: command.
+func dashParseResponse(response string) (text, cmd string) {
+	lines := strings.Split(strings.TrimSpace(response), "\n")
+	var textLines []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "CMD:") {
+			cmd = strings.TrimSpace(strings.TrimPrefix(trimmed, "CMD:"))
+		} else {
+			textLines = append(textLines, line)
+		}
+	}
+	text = strings.TrimSpace(strings.Join(textLines, "\n"))
+	return
+}
+
+func handleAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	limitBody(w, r)
+
+	var req aiReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad request", 400)
+		return
+	}
+	if strings.TrimSpace(req.Question) == "" {
+		jsonError(w, "question vide", 400)
+		return
+	}
+
+	configMu.Lock()
+	cfg, err := config.Load()
+	configMu.Unlock()
+	if err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	if !cfg.AIEnabled {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(403)
+		json.NewEncoder(w).Encode(map[string]string{"error": "ai_disabled"})
+		return
+	}
+
+	ctx := dashSafeContext(cfg)
+	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nQuestion: %s", dashAISystemPrompt, ctx, req.Question)
+
+	var rawResponse, source string
+
+	// Try Ollama first
+	if model, ok := dashTryOllama(); ok {
+		rawResponse, err = dashAskOllama(model, fullPrompt)
+		if err == nil {
+			source = "ollama:" + model
+		}
+	}
+
+	// Fallback to Workers AI
+	if rawResponse == "" {
+		accountID, apiKey, cfErr := dashLoadCFCredentials(cfg)
+		if cfErr != nil || accountID == "" || apiKey == "" {
+			jsonError(w, "Ollama non disponible et Cloudflare Workers AI non configure", 503)
+			return
+		}
+		rawResponse, err = dashAskWorkersAI(accountID, apiKey, fullPrompt)
+		if err != nil {
+			jsonError(w, err.Error(), 503)
+			return
+		}
+		source = "workers_ai"
+	}
+
+	text, cmd := dashParseResponse(rawResponse)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(aiResp{
+		Answer:  text,
+		Command: cmd,
+		Source:  source,
+	})
 }
 
 type pairReq struct {

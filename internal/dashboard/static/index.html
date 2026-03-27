@@ -162,6 +162,120 @@
         .cf-config span { color: #e1e4e8; }
         .page { display: none; }
         .page.active { display: block; }
+
+        /* AI chat */
+        #ai-chat-wrap {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 200px);
+            min-height: 400px;
+        }
+        #ai-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .ai-msg {
+            display: flex;
+            flex-direction: column;
+            max-width: 80%;
+        }
+        .ai-msg.user { align-self: flex-end; align-items: flex-end; }
+        .ai-msg.bot  { align-self: flex-start; align-items: flex-start; }
+        .ai-bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .ai-msg.user .ai-bubble {
+            background: #1f6feb;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+        .ai-msg.bot .ai-bubble {
+            background: #21262d;
+            color: #e1e4e8;
+            border: 1px solid #30363d;
+            border-bottom-left-radius: 4px;
+        }
+        .ai-cmd-btn {
+            margin-top: 8px;
+            background: #0d1117;
+            border: 1px solid #3fb950;
+            color: #3fb950;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            font-family: monospace;
+        }
+        .ai-cmd-btn:hover { background: #23863622; }
+        .ai-cmd-btn.copied { border-color: #8b949e; color: #8b949e; }
+        .ai-source {
+            font-size: 11px;
+            color: #8b949e;
+            margin-top: 4px;
+        }
+        #ai-input-row {
+            display: flex;
+            gap: 8px;
+            padding-top: 12px;
+            border-top: 1px solid #30363d;
+            margin-top: 12px;
+        }
+        #ai-input {
+            flex: 1;
+            padding: 10px 14px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            color: #e1e4e8;
+            font-size: 14px;
+            resize: none;
+            font-family: inherit;
+        }
+        #ai-input:focus { outline: none; border-color: #58a6ff; }
+        #ai-send {
+            background: #1f6feb;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            align-self: flex-end;
+        }
+        #ai-send:hover { background: #1a60d2; }
+        #ai-send:disabled { background: #30363d; cursor: default; }
+        .ai-loading {
+            align-self: flex-start;
+            color: #8b949e;
+            font-size: 13px;
+            font-style: italic;
+            padding: 4px 0;
+        }
+        .ai-disabled-msg {
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            color: #8b949e;
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        .ai-disabled-msg code {
+            background: #0d1117;
+            padding: 2px 8px;
+            border-radius: 4px;
+            color: #3fb950;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
@@ -170,6 +284,7 @@
         <div class="nav">
             <button class="active" onclick="showPage('local')">Local</button>
             <button onclick="showPage('pairing')">Pairing</button>
+            <button onclick="showPage('ai')">AI</button>
             <button onclick="showPage('info')">Info</button>
         </div>
     </header>
@@ -305,6 +420,28 @@
         </div>
     </div>
 
+    <!-- AI PAGE -->
+    <div class="container page" id="page-ai">
+        <div class="card full" style="height: calc(100vh - 120px); display: flex; flex-direction: column; padding: 20px;">
+            <h2 style="margin-bottom: 16px;">Assistant IA <span id="ai-source-badge" style="font-size:12px; font-weight:400; color:#8b949e;"></span></h2>
+            <div id="ai-disabled-banner" style="display:none;">
+                <div class="ai-disabled-msg">
+                    <p>L'assistant IA n'est pas active.</p>
+                    <p style="margin-top:8px;">Pour l'activer, lance dans un terminal :</p>
+                    <p style="margin-top:8px;"><code>hop ai --enable</code></p>
+                    <p style="margin-top:8px; font-size:12px;">Il connait tes machines, services et aliases, et peut proposer des commandes hop a executer. Utilise Ollama en local si disponible (zero fuite de donnees), sinon Cloudflare Workers AI.</p>
+                </div>
+            </div>
+            <div id="ai-chat-wrap" style="display:none;">
+                <div id="ai-messages"></div>
+                <div id="ai-input-row">
+                    <textarea id="ai-input" rows="2" placeholder="Pose une question sur ta config hop..."></textarea>
+                    <button id="ai-send" onclick="aiSend()">Envoyer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Cloudflare -->
     <div class="modal-overlay" id="modal-cloudflare">
         <div class="modal">
@@ -358,6 +495,7 @@
             renderMachines(cfg.machines || {});
             renderServices(cfg.services || {});
             renderCloudflare(cfg.cloudflare || {});
+            aiCheckEnabled(cfg);
         }
 
         // --- XSS Protection ---
@@ -588,6 +726,123 @@
                 status.style.color = '#f85149';
             }
         }
+
+        // --- AI chat ---
+        let aiEnabled = false;
+
+        function aiCheckEnabled(cfg) {
+            aiEnabled = !!(cfg && cfg.AIEnabled);
+            const banner = document.getElementById('ai-disabled-banner');
+            const chat = document.getElementById('ai-chat-wrap');
+            if (aiEnabled) {
+                banner.style.display = 'none';
+                chat.style.display = 'flex';
+            } else {
+                banner.style.display = 'block';
+                chat.style.display = 'none';
+            }
+        }
+
+        function aiAddMessage(role, text, cmd, source) {
+            const msgs = document.getElementById('ai-messages');
+            const wrap = document.createElement('div');
+            wrap.className = 'ai-msg ' + role;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'ai-bubble';
+            bubble.textContent = text;
+            wrap.appendChild(bubble);
+
+            if (cmd) {
+                const btn = document.createElement('button');
+                btn.className = 'ai-cmd-btn';
+                btn.textContent = cmd;
+                btn.title = 'Cliquer pour copier';
+                btn.onclick = function() {
+                    navigator.clipboard.writeText(cmd).then(() => {
+                        btn.textContent = 'Copie !';
+                        btn.classList.add('copied');
+                        setTimeout(() => {
+                            btn.textContent = cmd;
+                            btn.classList.remove('copied');
+                        }, 2000);
+                    });
+                };
+                wrap.appendChild(btn);
+            }
+
+            if (source && role === 'bot') {
+                const src = document.createElement('div');
+                src.className = 'ai-source';
+                src.textContent = source.startsWith('ollama:') ? 'Ollama (' + source.slice(7) + ') — local' : 'Cloudflare Workers AI';
+                wrap.appendChild(src);
+            }
+
+            msgs.appendChild(wrap);
+            msgs.scrollTop = msgs.scrollHeight;
+        }
+
+        function aiAddLoading() {
+            const msgs = document.getElementById('ai-messages');
+            const el = document.createElement('div');
+            el.className = 'ai-loading';
+            el.id = 'ai-loading';
+            el.textContent = 'Reflexion en cours...';
+            msgs.appendChild(el);
+            msgs.scrollTop = msgs.scrollHeight;
+            return el;
+        }
+
+        async function aiSend() {
+            const input = document.getElementById('ai-input');
+            const btn = document.getElementById('ai-send');
+            const question = input.value.trim();
+            if (!question) return;
+
+            input.value = '';
+            btn.disabled = true;
+            aiAddMessage('user', question);
+            const loading = aiAddLoading();
+
+            try {
+                const res = await fetch(API + '/api/ai', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({question}),
+                });
+                const data = await res.json();
+                loading.remove();
+
+                if (res.status === 403 && data.error === 'ai_disabled') {
+                    aiEnabled = false;
+                    document.getElementById('ai-disabled-banner').style.display = 'block';
+                    document.getElementById('ai-chat-wrap').style.display = 'none';
+                } else if (data.error) {
+                    aiAddMessage('bot', 'Erreur: ' + data.error, null, null);
+                } else {
+                    aiAddMessage('bot', data.answer || '', data.command || '', data.source || '');
+                }
+            } catch(e) {
+                loading.remove();
+                aiAddMessage('bot', 'Erreur de connexion.', null, null);
+            } finally {
+                btn.disabled = false;
+                input.focus();
+            }
+        }
+
+        // Send on Enter (Shift+Enter for newline)
+        document.addEventListener('DOMContentLoaded', function() {
+            const input = document.getElementById('ai-input');
+            if (input) {
+                input.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        aiSend();
+                    }
+                });
+            }
+        });
 
         // --- Init ---
         initCSRF().then(() => loadConfig());
