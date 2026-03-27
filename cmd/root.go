@@ -29,6 +29,8 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Erreur init: %v\n", err)
 			os.Exit(1)
 		}
+		// Detect legacy install (non-sandbox ~/.hop without .installed marker)
+		checkLegacyInstall()
 		// Silent update check (once per day, non-blocking)
 		if cmd.Name() != "update" && cmd.Name() != "version" && cmd.Name() != "uninstall" {
 			go CheckUpdateBackground()
@@ -403,6 +405,28 @@ func runLocal(command string) {
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
+		}
+	}
+}
+
+// checkLegacyInstall detects an old non-sandbox ~/.hop/ and warns
+func checkLegacyInstall() {
+	if config.IsInstalled() {
+		return // already in installed mode, fine
+	}
+	home, _ := os.UserHomeDir()
+	legacyDir := filepath.Join(home, ".hop")
+	legacyConfig := filepath.Join(legacyDir, "config.yml")
+	installedMarker := filepath.Join(legacyDir, ".installed")
+
+	// Check if legacy dir exists WITHOUT .installed marker
+	if _, err := os.Stat(legacyConfig); err == nil {
+		if _, err := os.Stat(installedMarker); os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "⚠ Ancienne installation detectee (~/.hop/ sans mode sandbox)")
+			fmt.Fprintln(os.Stderr, "  Pour nettoyer: rm -rf ~/.hop/")
+			fmt.Fprintln(os.Stderr, "  Ou pour migrer: hop install (rend permanent)")
+			fmt.Fprintln(os.Stderr, "")
 		}
 	}
 }
