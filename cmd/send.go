@@ -50,11 +50,11 @@ hop send rpi fichier.txt --to /opt/   # destination custom`,
 
 		// Detect if source is a URL
 		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-			runSendURL(src, machineName, machine)
+			runSendURL(cfg, src, machineName, machine)
 			return
 		}
 
-		runSendFile(src, machineName, machine)
+		runSendFile(cfg, src, machineName, machine)
 	},
 }
 
@@ -75,7 +75,7 @@ func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-func runSendURL(url string, machineName string, machine config.Machine) {
+func runSendURL(cfg *config.Config, url string, machineName string, machine config.Machine) {
 	target, viaTunnel := detectTarget(machine)
 
 	dest := sendToFlag
@@ -92,7 +92,7 @@ func runSendURL(url string, machineName string, machine config.Machine) {
 
 	fmt.Printf("→ Telechargement de %s sur %s\n", url, machineName)
 
-	sshCmdArgs, cleanTarget := buildSSHArgs(target, viaTunnel)
+	sshCmdArgs, cleanTarget := buildSSHArgs(cfg, target, viaTunnel)
 	sshCmdArgs = append(sshCmdArgs, cleanTarget, "--", remoteCmd)
 
 	sh := exec.Command("ssh", sshCmdArgs...)
@@ -109,7 +109,7 @@ func runSendURL(url string, machineName string, machine config.Machine) {
 	fmt.Printf("→ Telecharge sur %s dans %s\n", machineName, dest)
 }
 
-func runSendFile(src string, machineName string, machine config.Machine) {
+func runSendFile(cfg *config.Config, src string, machineName string, machine config.Machine) {
 	info, err := os.Stat(src)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Source introuvable: %v\n", err)
@@ -125,7 +125,7 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 
 	// Check remote disk space BEFORE anything
 	fileSize := info.Size()
-	checkArgs, checkTarget := buildSSHArgs(target, viaTunnel)
+	checkArgs, checkTarget := buildSSHArgs(cfg, target, viaTunnel)
 	checkArgs = append(checkArgs, checkTarget, "--", "df", "--output=avail", "-B1", shellEscape(dest), "2>/dev/null", "|", "tail", "-1")
 	if out, err := exec.Command("ssh", checkArgs...).Output(); err == nil {
 		avail := strings.TrimSpace(string(out))
@@ -143,13 +143,13 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 	}
 
 	// Create remote dir after space check passed
-	mkdirArgs, mkdirTarget := buildSSHArgs(target, viaTunnel)
+	mkdirArgs, mkdirTarget := buildSSHArgs(cfg, target, viaTunnel)
 	mkdirArgs = append(mkdirArgs, mkdirTarget, "--", "mkdir", "-p", shellEscape(dest))
 	mkdirCmd := exec.Command("ssh", mkdirArgs...)
 	mkdirCmd.Stderr = os.Stderr
 	_ = mkdirCmd.Run()
 
-	scpBaseArgs, scpTarget := buildSCPArgs(viaTunnel, target)
+	scpBaseArgs, scpTarget := buildSCPArgs(cfg, viaTunnel, target)
 	remoteTarget := fmt.Sprintf("%s:%s", scpTarget, dest)
 	if info.IsDir() {
 		scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
@@ -180,7 +180,7 @@ func runSendFile(src string, machineName string, machine config.Machine) {
 		localHash := localMD5(src)
 		if localHash != "" {
 			remotePath := dest + filepath.Base(src)
-			remoteHashArgs, rhTarget := buildSSHArgs(target, viaTunnel)
+			remoteHashArgs, rhTarget := buildSSHArgs(cfg, target, viaTunnel)
 			remoteHashArgs = append(remoteHashArgs, rhTarget, "--", "md5sum", shellEscape(remotePath))
 			out, err := exec.Command("ssh", remoteHashArgs...).Output()
 			if err == nil {
@@ -233,12 +233,17 @@ func splitTargetPort(target string) (string, string) {
 
 // buildSSHArgs builds SSH args with hop key + tunnel proxy + port if needed
 // Returns (args, cleanTarget) where cleanTarget has port stripped
-func buildSSHArgs(target string, viaTunnel bool) ([]string, string) {
+func buildSSHArgs(cfg *config.Config, target string, viaTunnel bool) ([]string, string) {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
 	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
-		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+		proxyCmd := fmt.Sprintf("%s access ssh --hostname %%h", cfPath)
+		if cfg != nil && cfg.Cloudflare.CFServiceTokenID != "" && cfg.Cloudflare.CFServiceTokenSecret != "" {
+			proxyCmd += fmt.Sprintf(" --service-token-id %s --service-token-secret %s",
+				cfg.Cloudflare.CFServiceTokenID, cfg.Cloudflare.CFServiceTokenSecret)
+		}
+		args = append(args, "-o", "ProxyCommand="+proxyCmd)
 	}
 	cleanTarget := target
 	if ct, port := splitTargetPort(target); port != "" {
@@ -248,12 +253,17 @@ func buildSSHArgs(target string, viaTunnel bool) ([]string, string) {
 	return args, cleanTarget
 }
 
-func buildSCPArgs(viaTunnel bool, target string) ([]string, string) {
+func buildSCPArgs(cfg *config.Config, viaTunnel bool, target string) ([]string, string) {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
 	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
-		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+		proxyCmd := fmt.Sprintf("%s access ssh --hostname %%h", cfPath)
+		if cfg != nil && cfg.Cloudflare.CFServiceTokenID != "" && cfg.Cloudflare.CFServiceTokenSecret != "" {
+			proxyCmd += fmt.Sprintf(" --service-token-id %s --service-token-secret %s",
+				cfg.Cloudflare.CFServiceTokenID, cfg.Cloudflare.CFServiceTokenSecret)
+		}
+		args = append(args, "-o", "ProxyCommand="+proxyCmd)
 	}
 	cleanTarget := target
 	if ct, port := splitTargetPort(target); port != "" {
@@ -293,7 +303,7 @@ hop receive rpi /opt/data/ --to ~/tmp  # destination custom`,
 			dest = "."
 		}
 
-		scpBaseArgs, scpTarget := buildSCPArgs(viaTunnel, target)
+		scpBaseArgs, scpTarget := buildSCPArgs(cfg, viaTunnel, target)
 		src := fmt.Sprintf("%s:%s", scpTarget, remotePath)
 		scpBaseArgs = append([]string{"-r"}, scpBaseArgs...)
 		scpBaseArgs = append(scpBaseArgs, src, dest)

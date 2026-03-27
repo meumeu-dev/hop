@@ -12,6 +12,7 @@ import (
 	"time"
 
 	cf "github.com/meumeu-dev/hop/internal/cloudflared"
+	"github.com/meumeu-dev/hop/internal/cfaccess"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -120,7 +121,37 @@ var tunnelSetupCmd = &cobra.Command{
 			fmt.Printf("  Config ecrite: %s\n", cfConfigPath)
 		}
 
-		// Step 5: Run tunnel
+		// Step 5: CF Access setup (only when credentials are fully available)
+		if cfg.Cloudflare.Domain != "" && cfg.Cloudflare.EnvFile != "" {
+			fmt.Println("\n→ Etape 5: Configuration Cloudflare Access (service token)")
+			result, err := cfaccess.Setup(cfg, tunnelName)
+			if err != nil {
+				fmt.Printf("  ⚠ Echec setup CF Access: %v\n", err)
+				fmt.Println("  Le tunnel fonctionnera mais CF Access devra etre configure manuellement.")
+			} else {
+				if result.TokenID != "" {
+					// Always update the token ID (may have been set already)
+					cfg.Cloudflare.CFServiceTokenID = result.TokenID
+				}
+				if result.TokenSecret != "" {
+					cfg.Cloudflare.CFServiceTokenSecret = result.TokenSecret
+					fmt.Println("  → Service token secret sauvegarde dans la config.")
+				} else if result.Reused {
+					// Keep existing secret if we already have one
+					fmt.Println("  → Token existant reutilise (secret conserve si deja present).")
+				}
+				if err := cfg.Save(); err != nil {
+					fmt.Fprintf(os.Stderr, "  ⚠ Erreur sauvegarde config: %v\n", err)
+				} else {
+					fmt.Println("  → Config sauvegardee avec le service token.")
+				}
+			}
+		} else {
+			fmt.Println("\n→ Etape 5: CF Access ignore (EnvFile ou Domain non configure)")
+			fmt.Println("  Relancez 'hop tunnel setup' apres 'hop config' pour configurer CF Access.")
+		}
+
+		// Step 6: Run tunnel
 		if config.IsInstalled() {
 			fmt.Print("\n→ Installer comme service systemd (permanent) ? [o/N]: ")
 			confirm, _ := reader.ReadString('\n')

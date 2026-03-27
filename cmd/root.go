@@ -103,17 +103,17 @@ var rootCmd = &cobra.Command{
 		switch serviceName {
 		case "ssh":
 			if useTmux {
-				runSSHTmux(machine, sessionName)
+				runSSHTmux(cfg, machine, sessionName)
 			} else {
-				runSSH(machine)
+				runSSH(cfg, machine)
 			}
 		case "rustdesk":
 			runRustdesk(machine, machineName)
 		default:
 			if useTmux {
-				runRemoteTmux(machine, service, serviceName, sessionName)
+				runRemoteTmux(cfg, machine, service, serviceName, sessionName)
 			} else {
-				runRemote(machine, service, serviceName)
+				runRemote(cfg, machine, service, serviceName)
 			}
 		}
 	},
@@ -180,10 +180,10 @@ func runLocalTmux(svc config.Service, serviceName string, sessionName string) {
 	}
 }
 
-func runSSHTmux(m config.Machine, sessionName string) {
+func runSSHTmux(cfg *config.Config, m config.Machine, sessionName string) {
 	session := askSession(sessionName, "ssh")
 	target, viaTunnel := detectTarget(m)
-	args := sshArgs(target, viaTunnel)
+	args := sshArgs(cfg, target, viaTunnel)
 
 	// SSH into remote, then start tmux there
 	remoteCmd := fmt.Sprintf("tmux new-session -A -s %s", session)
@@ -201,7 +201,7 @@ func runSSHTmux(m config.Machine, sessionName string) {
 	}
 }
 
-func runRemoteTmux(m config.Machine, svc config.Service, serviceName string, sessionName string) {
+func runRemoteTmux(cfg *config.Config, m config.Machine, svc config.Service, serviceName string, sessionName string) {
 	session := askSession(sessionName, serviceName)
 	target, viaTunnel := detectTarget(m)
 
@@ -218,7 +218,7 @@ func runRemoteTmux(m config.Machine, svc config.Service, serviceName string, ses
 	// Wrap in tmux on the remote
 	tmuxRemoteCmd := fmt.Sprintf("tmux new-session -s %s '%s'", session, strings.ReplaceAll(remoteCmd, "'", "'\\''"))
 
-	args := sshArgs(target, viaTunnel)
+	args := sshArgs(cfg, target, viaTunnel)
 	args = append(args, "-t", "--", tmuxRemoteCmd)
 	sh := exec.Command("ssh", args...)
 	sh.Stdin = os.Stdin
@@ -309,12 +309,17 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 	return "", false
 }
 
-func sshArgs(target string, viaTunnel bool) []string {
+func sshArgs(cfg *config.Config, target string, viaTunnel bool) []string {
 	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
 	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
-		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))
+		proxyCmd := fmt.Sprintf("%s access ssh --hostname %%h", cfPath)
+		if cfg != nil && cfg.Cloudflare.CFServiceTokenID != "" && cfg.Cloudflare.CFServiceTokenSecret != "" {
+			proxyCmd += fmt.Sprintf(" --service-token-id %s --service-token-secret %s",
+				cfg.Cloudflare.CFServiceTokenID, cfg.Cloudflare.CFServiceTokenSecret)
+		}
+		args = append(args, "-o", "ProxyCommand="+proxyCmd)
 		args = append(args, target)
 		return args
 	}
@@ -334,9 +339,9 @@ func sshArgs(target string, viaTunnel bool) []string {
 	return args
 }
 
-func runSSH(m config.Machine) {
+func runSSH(cfg *config.Config, m config.Machine) {
 	target, viaTunnel := detectTarget(m)
-	args := sshArgs(target, viaTunnel)
+	args := sshArgs(cfg, target, viaTunnel)
 	sh := exec.Command("ssh", args...)
 	sh.Stdin = os.Stdin
 	sh.Stdout = os.Stdout
@@ -367,7 +372,7 @@ func runRustdesk(m config.Machine, name string) {
 	fmt.Printf("→ Rustdesk lancé vers %s (%s)\n", name, ms.ID)
 }
 
-func runRemote(m config.Machine, svc config.Service, name string) {
+func runRemote(cfg *config.Config, m config.Machine, svc config.Service, name string) {
 	target, viaTunnel := detectTarget(m)
 
 	remoteCmd := svc.Cmd
@@ -375,7 +380,7 @@ func runRemote(m config.Machine, svc config.Service, name string) {
 		remoteCmd = ms.Cmd
 	}
 
-	args := sshArgs(target, viaTunnel)
+	args := sshArgs(cfg, target, viaTunnel)
 	args = append(args, "-t", "--", remoteCmd)
 	sh := exec.Command("ssh", args...)
 	sh.Stdin = os.Stdin

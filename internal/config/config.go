@@ -42,8 +42,10 @@ type Service struct {
 }
 
 type CloudflareConfig struct {
-	Domain  string `yaml:"domain,omitempty"`
-	EnvFile string `yaml:"env_file,omitempty"`
+	Domain             string `yaml:"domain,omitempty"`
+	EnvFile            string `yaml:"env_file,omitempty"`
+	CFServiceTokenID   string `yaml:"cf_service_token_id,omitempty"`
+	CFServiceTokenSecret string `yaml:"cf_service_token_secret,omitempty"`
 }
 
 var validName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
