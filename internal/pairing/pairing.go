@@ -53,6 +53,7 @@ type PairData struct {
 	PublicKey string   `json:"public_key"`
 	HostKey   string   `json:"host_key,omitempty"`
 	CFDomain  string   `json:"cf_domain,omitempty"`
+	CFEnv     string   `json:"cf_env,omitempty"`
 	Version   string   `json:"version,omitempty"`
 }
 

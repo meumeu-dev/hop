@@ -92,14 +92,30 @@ func buildPairData() (string, *pairing.PairData) {
 		hostKey = strings.TrimSpace(string(hostKeyData))
 	}
 
+	// Include CF env if available (will be shared with paired machine)
+	cfEnv := ""
+	cfg, _ := config.Load()
+	if cfg != nil && cfg.Cloudflare.EnvFile != "" {
+		if envData, err := os.ReadFile(cfg.Cloudflare.EnvFile); err == nil {
+			cfEnv = string(envData)
+		}
+	}
+
 	data := &pairing.PairData{
-		Hostname:  hostname,
-		IP:        localIP,
-		IPs:       detectAllIPs(),
-		User:      user,
+		Hostname: hostname,
+		IP:       localIP,
+		IPs:      detectAllIPs(),
+		User:     user,
 		PublicKey: pubKey,
-		HostKey:   hostKey,
-		Version:   version,
+		HostKey:  hostKey,
+		Version:  version,
+	}
+
+	if cfg != nil && cfg.Cloudflare.Domain != "" {
+		data.CFDomain = cfg.Cloudflare.Domain
+	}
+	if cfEnv != "" {
+		data.CFEnv = cfEnv
 	}
 
 	return code, data
@@ -314,8 +330,11 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 		}
 	}
 
-	// Apply CF domain if received
-	if response.CFDomain != "" {
+	// Apply CF config if received
+	if response.CFEnv != "" {
+		fmt.Printf("→ Config Cloudflare recue de %s\n", response.Hostname)
+		applyCFEnvFromPair(response.CFEnv, response.CFDomain)
+	} else if response.CFDomain != "" {
 		fmt.Printf("→ Domaine Cloudflare: %s\n", response.CFDomain)
 		pairing.ApplyCFConfig(response.CFDomain)
 	}
@@ -383,6 +402,11 @@ func buildClientResponse() (string, *pairing.PairData) {
 	cfg, _ := config.Load()
 	if cfg != nil && cfg.Cloudflare.Domain != "" {
 		response.CFDomain = cfg.Cloudflare.Domain
+	}
+	if cfg != nil && cfg.Cloudflare.EnvFile != "" {
+		if envData, err := os.ReadFile(cfg.Cloudflare.EnvFile); err == nil {
+			response.CFEnv = string(envData)
+		}
 	}
 
 	return hostname, response
@@ -510,14 +534,10 @@ func finalizePairClient(serverData *pairing.PairData) {
 	}
 	fmt.Println(")")
 
-	// Transfer CF credentials via SSH and setup tunnel
-	if cfg != nil && cfg.Cloudflare.Domain != "" {
-		cfEmail, cfAPIKey := pairing.LoadCFCredentials()
-		if cfAPIKey != "" {
-			fmt.Println()
-			fmt.Println("→ Transfert des identifiants Cloudflare via SSH...")
-			transferAndSetupTunnel(serverData, cfg.Cloudflare.Domain, cfEmail, cfAPIKey)
-		}
+	// Apply CF config from server if received
+	if serverData.CFEnv != "" {
+		fmt.Printf("→ Config Cloudflare recue de %s\n", serverData.Hostname)
+		applyCFEnvFromPair(serverData.CFEnv, serverData.CFDomain)
 	}
 
 	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
@@ -606,6 +626,52 @@ func checkAndOfferTunnel(remoteHostname string) {
 	fmt.Println()
 	fmt.Printf("⚠ Reseaux differents (%s vs %s)\n", localIP, remoteMachine.IP)
 	fmt.Println("  Pour l'acces distant: hop tunnel setup")
+}
+
+// applyCFEnvFromPair saves received CF credentials and auto-configures tunnel
+func applyCFEnvFromPair(cfEnv string, cfDomain string) {
+	envPath := filepath.Join(config.HopDir(), "cloudflare.env")
+	if err := os.WriteFile(envPath, []byte(cfEnv), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "  Erreur sauvegarde cloudflare.env: %v\n", err)
+		return
+	}
+
+	cfg, _ := config.Load()
+	if cfg != nil {
+		cfg.Cloudflare.Domain = cfDomain
+		cfg.Cloudflare.EnvFile = envPath
+		cfg.Save()
+	}
+
+	fmt.Println("→ Credentials Cloudflare sauvegardees")
+
+	// Check if account ID is present for auto tunnel setup
+	hasAccountID := false
+	for _, line := range strings.Split(cfEnv, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "CF_ACCOUNT_ID=") {
+			val := strings.TrimPrefix(strings.TrimSpace(line), "CF_ACCOUNT_ID=")
+			if val != "" {
+				hasAccountID = true
+			}
+		}
+	}
+
+	if hasAccountID {
+		if !readConfirm("Configurer le tunnel SSH automatiquement ? [o/N]: ") {
+			fmt.Println("  → hop tunnel setup quand tu voudras.")
+			return
+		}
+		fmt.Println()
+		hopBin, _ := os.Executable()
+		hostname, _ := os.Hostname()
+		setupCmd := exec.Command(hopBin, "tunnel", "setup", hostname)
+		setupCmd.Stdin = os.Stdin
+		setupCmd.Stdout = os.Stdout
+		setupCmd.Stderr = os.Stderr
+		setupCmd.Run()
+	} else {
+		fmt.Println("  → hop tunnel setup pour configurer le tunnel (CF_ACCOUNT_ID manquant pour auto)")
+	}
 }
 
 func copyToClipboard(text string) error {
