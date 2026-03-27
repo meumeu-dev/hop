@@ -248,9 +248,9 @@
                 <h2>Commandes utiles</h2>
                 <div style="color: #8b949e; font-size: 13px; line-height: 2;">
                     <p><code>hop config</code> — configure Cloudflare (domaine + token)</p>
-                    <p><code>hop config show</code> — affiche la config</p>
+                    <p><code>hop config --show</code> — affiche la config</p>
                     <p><code>hop tunnel setup</code> — tunnel Cloudflare permanent</p>
-                    <p><code>hop config &lt;url&gt;</code> — worker custom</p>
+                    <p><code>hop ai &lt;question&gt;</code> — assistant AI (opt-in)</p>
                     <p><code>hop send &lt;machine&gt; &lt;fichier-ou-url&gt;</code> — envoie fichier ou telecharge URL</p>
                     <p><code>hop receive &lt;machine&gt; &lt;chemin&gt;</code> — recoit un fichier</p>
                     <p><code>hop tunnel quick</code> — tunnel rapide (Pinggy/ngrok)</p>
@@ -291,7 +291,7 @@
                     <p><strong style="color:#3fb950;">Auto</strong> — <code>hop pair</code>. LAN + relay en parallele, premier qui repond gagne.</p>
                     <p><strong style="color:#3fb950;">LAN</strong> — <code>hop pair -m lan</code>. Broadcast UDP direct, zero internet.</p>
                     <p><strong style="color:#58a6ff;">Relay</strong> — <code>hop pair -m relay</code>. Via le worker Cloudflare (chiffre E2E).</p>
-                    <p style="margin-top: 8px; color: #8b949e;">Worker custom: <code>hop config https://...</code> — tout est chiffre E2E, le relay ne voit rien.</p>
+                    <p style="margin-top: 8px; color: #8b949e;">Worker custom: configurable dans <code>hop config</code> (question interactive).</p>
                 </div>
             </div>
             <div class="card full">

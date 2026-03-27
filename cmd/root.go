@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -278,7 +279,8 @@ func detectTarget(m config.Machine) (target string, viaTunnel bool) {
 }
 
 func sshArgs(target string, viaTunnel bool) []string {
-	args := []string{}
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
+	args := []string{"-i", hopKeyPath, "-o", "StrictHostKeyChecking=accept-new"}
 	if viaTunnel {
 		cfPath := cloudflared.Path()
 		args = append(args, "-o", fmt.Sprintf("ProxyCommand=%s access ssh --hostname %%h", cfPath))

@@ -436,19 +436,29 @@ func handleResponse(response string) {
 	}
 }
 
-// runHopCommand executes a hop subcommand by parsing and dispatching it.
+// safeCommands whitelist — AI cannot propose destructive commands
+var safeCommands = map[string]bool{
+	"ssh": true, "ping": true, "list": true,
+	"send": true, "receive": true, "pair": true,
+	"tunnel": true, "add": true, "alias": true,
+	"dashboard": true, "version": true, "export": true,
+}
+
 func runHopCommand(cmd string) {
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
 		return
 	}
 
-	// Strip leading "hop" if included
 	if parts[0] == "hop" {
 		parts = parts[1:]
 	}
 	if len(parts) == 0 {
-		fmt.Fprintln(os.Stderr, "Commande vide.")
+		return
+	}
+
+	if !safeCommands[parts[0]] {
+		fmt.Fprintf(os.Stderr, "→ Commande '%s' bloquee (non autorisee via AI).\n", parts[0])
 		return
 	}
 
