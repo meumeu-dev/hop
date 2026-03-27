@@ -343,7 +343,22 @@ func askOllama(model, prompt string) (string, error) {
 }
 
 // askWorkersAI sends a prompt to Cloudflare Workers AI and returns the response text.
+func validateAccountID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'f') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 func askWorkersAI(accountID, apiKey, prompt string) (string, error) {
+	if !validateAccountID(accountID) {
+		return "", fmt.Errorf("account ID invalide")
+	}
 	payload := map[string]interface{}{
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},

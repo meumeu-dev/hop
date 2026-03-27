@@ -649,6 +649,15 @@ func dashLoadCFCredentials(cfg *config.Config) (string, string, error) {
 
 // dashAskWorkersAI sends a prompt to Cloudflare Workers AI.
 func dashAskWorkersAI(accountID, apiKey, prompt string) (string, error) {
+	// Validate account ID format (hex, 32 chars)
+	if len(accountID) != 32 {
+		return "", fmt.Errorf("account ID invalide")
+	}
+	for _, c := range accountID {
+		if !((c >= 'a' && c <= 'f') || (c >= '0' && c <= '9')) {
+			return "", fmt.Errorf("account ID invalide")
+		}
+	}
 	payload := map[string]interface{}{
 		"messages": []map[string]string{
 			{"role": "system", "content": dashAISystemPrompt},
@@ -777,6 +786,23 @@ func handleAI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	text, cmd := dashParseResponse(rawResponse)
+
+	// Whitelist check on proposed command
+	if cmd != "" {
+		parts := strings.Fields(cmd)
+		if len(parts) > 0 && parts[0] == "hop" {
+			parts = parts[1:]
+		}
+		safe := map[string]bool{
+			"ssh": true, "ping": true, "list": true,
+			"send": true, "receive": true, "pair": true,
+			"tunnel": true, "add": true, "alias": true,
+			"dashboard": true, "version": true, "export": true,
+		}
+		if len(parts) == 0 || !safe[parts[0]] {
+			cmd = "" // Block unsafe command
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(aiResp{
