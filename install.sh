@@ -8,6 +8,11 @@ set -euo pipefail
 REPO="meumeu-dev/hop"
 INSTALL_DIR="/usr/local/bin"
 
+# Detect Termux (Android)
+if [ -n "$TERMUX_VERSION" ] || [ -d "/data/data/com.termux" ]; then
+    INSTALL_DIR="$PREFIX/bin"
+fi
+
 # Detect OS
 OS=$(uname -s)
 case "$OS" in
