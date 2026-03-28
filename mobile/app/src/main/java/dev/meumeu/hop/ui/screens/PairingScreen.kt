@@ -3,6 +3,7 @@ package dev.meumeu.hop.ui.screens
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,7 +21,8 @@ fun PairingScreen(
     pairingStatus: String,
     pairingToken: String?,
     onStartHost: () -> Unit,
-    onJoin: (token: String) -> Unit
+    onJoin: (token: String) -> Unit,
+    onScanQR: () -> Unit
 ) {
     var joinToken by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf<String?>(null) }
@@ -43,7 +45,6 @@ fun PairingScreen(
                 )
                 Spacer(Modifier.height(8.dp))
 
-                // Show code prominently
                 if (pairingCode != null) {
                     Text(
                         pairingCode,
@@ -56,7 +57,6 @@ fun PairingScreen(
                     Spacer(Modifier.height(8.dp))
                 }
 
-                // Full token in a selectable text for copy
                 SelectionContainer {
                     Text(
                         pairingToken,
@@ -69,7 +69,7 @@ fun PairingScreen(
 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Sur l'autre machine:\nhop pair <token>",
+                    "Sur l'autre machine:\nhop pair <token>\n\nOu scanne le QR code depuis le dashboard",
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -84,7 +84,7 @@ fun PairingScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else if (mode == null) {
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(32.dp))
             Icon(
                 Icons.Default.Link,
                 contentDescription = null,
@@ -102,22 +102,34 @@ fun PairingScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(36.dp))
 
+            // QR Scanner — primary action
             Button(
+                onClick = onScanQR,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Scanner un QR code")
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedButton(
                 onClick = { mode = "host" },
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Generer un code (attendre)")
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             OutlinedButton(
                 onClick = { mode = "join" },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Entrer un token (rejoindre)")
+                Text("Entrer un token manuellement")
             }
         } else if (mode == "host") {
             Spacer(Modifier.height(48.dp))
@@ -147,7 +159,6 @@ fun PairingScreen(
                 Text("Retour")
             }
         } else {
-            // Join mode — enter full token from other machine
             Spacer(Modifier.height(48.dp))
             Text(
                 "Rejoindre",

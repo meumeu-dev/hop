@@ -33,6 +33,12 @@ var DashboardVersion = "dev"
 
 var configMu sync.Mutex
 
+// Active pairing session for dashboard-initiated pairing
+var activePairMu sync.Mutex
+var activePairSession *pairing.PairSession
+var activePairToken string
+var activePairResult *pairing.PairData
+
 type machineReq struct {
 	Name   string `json:"name"`
 	IP     string `json:"ip"`
@@ -141,6 +147,8 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/services/", handleServiceDelete)
 	mux.HandleFunc("/api/cloudflare", handleCloudflare)
 	mux.HandleFunc("/api/pair", handlePair)
+	mux.HandleFunc("/api/pair/start", handlePairStart)
+	mux.HandleFunc("/api/pair/status", handlePairStatus)
 	mux.HandleFunc("/api/ai", handleAI)
 }
 
@@ -838,5 +846,143 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":       true,
 		"hostname": serverData.Hostname,
+	})
+}
+
+func handlePairStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	activePairMu.Lock()
+	defer activePairMu.Unlock()
+
+	// Clean up any previous session
+	if activePairSession != nil {
+		pairing.Cleanup(activePairSession)
+		activePairSession = nil
+		activePairToken = ""
+		activePairResult = nil
+	}
+
+	hostname, _ := os.Hostname()
+	_, pubKey, err := pairing.EnsureSSHKey()
+	if err != nil {
+		jsonError(w, "cannot generate SSH key", 500)
+		return
+	}
+
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "hop"
+	}
+	code := pairing.GenerateCode()
+
+	data := &pairing.PairData{
+		Hostname:  hostname,
+		PublicKey: pubKey,
+		User:      user,
+		Version:   DashboardVersion,
+	}
+
+	configMu.Lock()
+	cfg, err := config.Load()
+	if err == nil && cfg.Cloudflare.Domain != "" {
+		data.CFDomain = cfg.Cloudflare.Domain
+	}
+	configMu.Unlock()
+
+	session, err := pairing.PublishPairData(code, data)
+	if err != nil {
+		jsonError(w, err.Error(), 500)
+		return
+	}
+
+	token := session.PairID + "." + code + "." + session.Token
+	activePairSession = session
+	activePairToken = token
+	activePairResult = nil
+
+	// Start polling in background
+	go func() {
+		result, err := pairing.WaitForResponse(session, 2*time.Minute)
+		activePairMu.Lock()
+		defer activePairMu.Unlock()
+		if err != nil {
+			// Timeout or error — clean up
+			if activePairSession == session {
+				pairing.Cleanup(session)
+				activePairSession = nil
+				activePairToken = ""
+			}
+			return
+		}
+		activePairResult = result
+
+		// Auto-finalize: add key + machine
+		_ = pairing.AddAuthorizedKey(result.PublicKey)
+
+		configMu.Lock()
+		defer configMu.Unlock()
+		cfg, err := config.Load()
+		if err == nil {
+			tunnel := ""
+			if cfg.Cloudflare.Domain != "" {
+				tunnel = result.Hostname + "." + cfg.Cloudflare.Domain
+			}
+			cfg.Machines[result.Hostname] = config.Machine{
+				IP:       result.IP,
+				User:     result.User,
+				Tunnel:   tunnel,
+				Services: make(map[string]config.MachineService),
+			}
+			cfg.Save()
+		}
+		pairing.Cleanup(session)
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":    true,
+		"token": token,
+		"code":  code,
+	})
+}
+
+func handlePairStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	activePairMu.Lock()
+	defer activePairMu.Unlock()
+
+	if activePairSession == nil && activePairResult == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "none",
+		})
+		return
+	}
+
+	if activePairResult != nil {
+		hostname := activePairResult.Hostname
+		activePairSession = nil
+		activePairToken = ""
+		activePairResult = nil
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "paired",
+			"hostname": hostname,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "waiting",
+		"token":  activePairToken,
 	})
 }

@@ -2,9 +2,11 @@ package dev.meumeu.hop
 
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.ActivityResultLauncher
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -12,17 +14,43 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanIntentResult
+import com.journeyapps.barcodescanner.ScanOptions
 import dev.meumeu.hop.ui.HopViewModel
 import dev.meumeu.hop.ui.screens.*
 import dev.meumeu.hop.ui.theme.HopTheme
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var qrLauncher: ActivityResultLauncher<ScanOptions>
+    private var onQRResult: ((String) -> Unit)? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        qrLauncher = registerForActivityResult(ScanContract()) { result: ScanIntentResult ->
+            val content = result.contents
+            if (content != null) {
+                Log.i("HOP", "QR scanned: ${content.take(30)}...")
+                onQRResult?.invoke(content)
+            }
+        }
+
         setContent {
             HopTheme {
-                HopApp()
+                HopApp(
+                    onLaunchQR = { callback ->
+                        onQRResult = callback
+                        val options = ScanOptions()
+                        options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        options.setPrompt("Scanne le QR code affiche par hop pair")
+                        options.setBeepEnabled(false)
+                        options.setOrientationLocked(false)
+                        qrLauncher.launch(options)
+                    }
+                )
             }
         }
     }
@@ -37,7 +65,10 @@ sealed class Screen {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HopApp(viewModel: HopViewModel = viewModel()) {
+fun HopApp(
+    viewModel: HopViewModel = viewModel(),
+    onLaunchQR: ((String) -> Unit) -> Unit = {}
+) {
     val state by viewModel.state.collectAsState()
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Machines) }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -109,7 +140,12 @@ fun HopApp(viewModel: HopViewModel = viewModel()) {
                     pairingStatus = state.pairingStatus,
                     pairingToken = state.pairingToken,
                     onStartHost = { viewModel.startPairingHost() },
-                    onJoin = { token -> viewModel.joinPairing(token) }
+                    onJoin = { token -> viewModel.joinPairing(token) },
+                    onScanQR = {
+                        onLaunchQR { content ->
+                            viewModel.onQRCodeScanned(content)
+                        }
+                    }
                 )
 
                 is Screen.Send -> SendScreen(

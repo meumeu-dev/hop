@@ -389,12 +389,18 @@
                 </p>
                 <div style="display: flex; gap: 16px; flex-wrap: wrap;">
                     <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
-                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Lancer un pairing</h4>
-                        <code style="background: #161b22; padding: 8px 12px; border-radius: 6px; display: block; font-size: 14px; color: #3fb950;">hop pair</code>
-                        <p style="font-size: 12px; color: #8b949e; margin-top: 8px;">Propose le choix du mode (auto, LAN, relay). En auto: LAN + relay en parallele.</p>
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Initier un pairing</h4>
+                        <button onclick="startPairing()" id="pair-start-btn" style="background: #1f6feb; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; width: 100%;">Generer un QR code</button>
+                        <div id="pair-qr-zone" style="display:none; margin-top: 16px; text-align: center;">
+                            <canvas id="pair-qr-canvas" style="margin: 0 auto; border-radius: 8px;"></canvas>
+                            <p id="pair-qr-code" style="font-size: 20px; font-weight: bold; color: #3fb950; margin-top: 8px; letter-spacing: 4px; font-family: monospace;"></p>
+                            <p style="font-size: 11px; color: #8b949e; margin-top: 4px;">Scanne le QR avec l'app Hop ou entre le token sur l'autre machine</p>
+                            <p id="pair-qr-token" style="font-size: 10px; color: #484f58; margin-top: 4px; word-break: break-all; cursor: pointer;" onclick="navigator.clipboard.writeText(this.textContent)" title="Cliquer pour copier"></p>
+                            <p id="pair-qr-status" style="font-size: 12px; margin-top: 8px; color: #8b949e;"></p>
+                        </div>
                     </div>
                     <div style="flex: 1; min-width: 280px; background: #0d1117; border-radius: 8px; padding: 20px; border: 1px solid #21262d;">
-                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Se connecter</h4>
+                        <h4 style="color: #58a6ff; margin-bottom: 12px;">Rejoindre (coller un token)</h4>
                         <div style="display: flex; gap: 8px;">
                             <input type="text" id="pair-code" placeholder="Colle le token relay ici" style="flex:1; padding: 8px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e1e4e8; font-size: 14px;">
                             <button onclick="doPairing()" style="background: #238636; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Connecter</button>
@@ -726,6 +732,84 @@
                 }
             } catch (e) {
                 status.textContent = 'Erreur de connexion.';
+                status.style.color = '#f85149';
+            }
+        }
+
+        // --- QR Code generator (minimal, inline) ---
+        function generateQR(canvas, text, size) {
+            // Use a simple approach: encode as data URL and use an image
+            // Actually, let's use a minimal QR code library inlined
+            // For simplicity, render token as large text + use Google Charts API for QR
+            const img = new Image();
+            img.onload = function() {
+                canvas.width = size;
+                canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, size, size);
+                ctx.drawImage(img, 0, 0, size, size);
+            };
+            img.crossOrigin = 'anonymous';
+            img.src = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(text)}&format=png`;
+        }
+
+        // --- Pairing: initiate ---
+        let pairPollInterval = null;
+
+        async function startPairing() {
+            const btn = document.getElementById('pair-start-btn');
+            const zone = document.getElementById('pair-qr-zone');
+            const status = document.getElementById('pair-qr-status');
+            btn.disabled = true;
+            btn.textContent = 'Generation...';
+
+            try {
+                const res = await fetch(API + '/api/pair/start', {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+                const data = await res.json();
+                if (!data.ok) throw new Error(data.error || 'Erreur');
+
+                zone.style.display = 'block';
+                document.getElementById('pair-qr-code').textContent = data.code;
+                document.getElementById('pair-qr-token').textContent = data.token;
+                status.textContent = 'En attente de connexion... (2 min)';
+                status.style.color = '#58a6ff';
+                btn.textContent = 'En attente...';
+
+                // Generate QR code
+                generateQR(document.getElementById('pair-qr-canvas'), data.token, 200);
+
+                // Poll for result
+                if (pairPollInterval) clearInterval(pairPollInterval);
+                pairPollInterval = setInterval(async () => {
+                    try {
+                        const r = await fetch(API + '/api/pair/status', {headers: authHeaders()});
+                        const s = await r.json();
+                        if (s.status === 'paired') {
+                            clearInterval(pairPollInterval);
+                            pairPollInterval = null;
+                            status.textContent = 'Paire avec ' + s.hostname + ' !';
+                            status.style.color = '#3fb950';
+                            btn.textContent = 'Generer un QR code';
+                            btn.disabled = false;
+                            loadConfig();
+                        } else if (s.status === 'none') {
+                            clearInterval(pairPollInterval);
+                            pairPollInterval = null;
+                            status.textContent = 'Expire. Relance le pairing.';
+                            status.style.color = '#f85149';
+                            btn.textContent = 'Generer un QR code';
+                            btn.disabled = false;
+                        }
+                    } catch(e) {}
+                }, 2000);
+            } catch(e) {
+                btn.disabled = false;
+                btn.textContent = 'Generer un QR code';
+                status.textContent = 'Erreur: ' + e.message;
                 status.style.color = '#f85149';
             }
         }

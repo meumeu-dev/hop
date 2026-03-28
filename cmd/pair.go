@@ -13,6 +13,7 @@ import (
 
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/meumeu-dev/hop/internal/pairing"
+	qrcode "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
@@ -168,9 +169,12 @@ func runPairServer() {
 	fmt.Printf("  hop pair %s\n", pairToken)
 	fmt.Println()
 	fmt.Printf("Ou sur le meme reseau:  hop pair %s\n", code)
+	fmt.Println()
+	fmt.Println("QR code (scanne avec l'app mobile):")
+	printQRCode(pairToken)
 
 	if err := copyToClipboard(pairToken); err == nil {
-		fmt.Println("\n(token copie dans le presse-papier)")
+		fmt.Println("(token copie dans le presse-papier)")
 	}
 	fmt.Println()
 	fmt.Println("En attente de connexion (LAN + relay)... (expire dans 2 min)")
@@ -244,9 +248,11 @@ func runPairServerWorker(code string, data *pairing.PairData) {
 	fmt.Println()
 	fmt.Println("Sur l'autre machine, lance:")
 	fmt.Printf("  hop pair %s\n", pairToken)
+	fmt.Println()
+	fmt.Println("QR code (scanne avec l'app mobile):")
+	printQRCode(pairToken)
 
 	if err := copyToClipboard(pairToken); err == nil {
-		fmt.Println()
 		fmt.Println("(aussi copié dans le presse-papier)")
 	}
 	fmt.Println()
@@ -688,6 +694,14 @@ func copyToClipboard(text string) error {
 	}
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
+}
+
+func printQRCode(token string) {
+	qr, err := qrcode.New(token, qrcode.Medium)
+	if err != nil {
+		return
+	}
+	fmt.Println(qr.ToSmallString(false))
 }
 
 func detectLocalIP() string {
