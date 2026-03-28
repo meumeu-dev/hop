@@ -601,7 +601,7 @@ func dashAskWorkersAI(accountID, apiKey, prompt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/meta/llama-3-8b-instruct", accountID)
+	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast", accountID)
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
