@@ -111,8 +111,10 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | `hop version [--check]` | Affiche la version |
 | `hop dashboard` | Interface web (local / reseau / tunnel) |
 | `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
-| `hop ai <question>` | Assistant AI (opt-in, Workers AI — CF requis) |
+| `hop ai <question>` | Assistant AI (opt-in, Workers AI Cloudflare par defaut) |
 | `hop ai --enable/--disable` | Active/desactive l'AI |
+| `hop ai --mcp <url>` | Configure un LLM externe via MCP (Claude, GPT, Ollama…) |
+| `hop ai --limits` | Affiche l'utilisation Workers AI |
 
 ## Pairing
 
@@ -133,6 +135,20 @@ Le worker custom se configure dans `hop config` (question interactive).
 hop config             # configure CF
 hop tunnel setup          # cree le tunnel + DNS
 ```
+
+## AI
+
+```bash
+hop ai --enable                               # active l'assistant (demande confirmation)
+hop ai "comment me connecter a rpi ?"         # pose une question en langage naturel
+hop ai --mcp https://mon-llm.dev/v1/...       # connecte Claude, GPT ou tout LLM MCP-compatible
+hop ai --limits                               # quota Workers AI Cloudflare
+hop ai --disable                              # desactive
+```
+
+- **Workers AI** (defaut) : Cloudflare gratuit, necessite `hop config` avec CF_ACCOUNT_ID
+- **MCP** : n'importe quel endpoint OpenAI-compatible. Priorite sur Workers AI si configure.
+- L'assistant connait tes machines, services et aliases. Les secrets (cles SSH, tokens) ne sont **jamais** envoyes.
 
 ## Dashboard
 

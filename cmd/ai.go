@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,6 +50,10 @@ Examples:
 				cfg.Save()
 				fmt.Println("→ MCP desactive. Workers AI sera utilise.")
 			} else {
+				if err := validateMCPURL(aiMCP); err != nil {
+					fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+					os.Exit(1)
+				}
 				cfg.MCPEndpoint = aiMCP
 				cfg.AIEnabled = true
 				cfg.Save()
@@ -82,8 +87,6 @@ Examples:
 			fmt.Println()
 			fmt.Println("Pour activer : hop ai --enable")
 			fmt.Println("Pour MCP    : hop ai --mcp https://mon-endpoint/v1/chat/completions")
-			fmt.Println()
-			fmt.Println("Pour activer : hop ai --enable")
 			return
 		}
 
@@ -280,6 +283,30 @@ func loadCFCredentials(cfg *config.Config) (string, string, error) {
 const systemPrompt = `Tu es l'assistant hop. Tu connais la config de l'utilisateur. Tu peux repondre en texte ou proposer une commande hop a executer. Si tu proposes une commande, prefixe-la avec CMD: sur une ligne separee. Reponds de maniere concise et utile.`
 
 // askWorkersAI sends a prompt to Cloudflare Workers AI and returns the response text.
+// validateMCPURL checks that the MCP endpoint is a safe https:// URL
+// and is not pointing to localhost or private IPs (SSRF mitigation).
+func validateMCPURL(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("URL MCP invalide: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("URL MCP doit commencer par https:// (recu: %s)", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL MCP: host manquant")
+	}
+	// Block localhost / loopback
+	loopback := []string{"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+	for _, lb := range loopback {
+		if host == lb {
+			return fmt.Errorf("URL MCP: host local non autorise (%s)", host)
+		}
+	}
+	return nil
+}
+
 func validateAccountID(id string) bool {
 	if len(id) != 32 {
 		return false
@@ -423,6 +450,10 @@ func runHopCommand(cmd string) {
 
 // askMCP sends a prompt to an MCP-compatible endpoint
 func askMCP(endpoint string, prompt string) (string, error) {
+	// Validate the endpoint URL before making the request (SSRF mitigation)
+	if err := validateMCPURL(endpoint); err != nil {
+		return "", err
+	}
 	// MCP uses OpenAI-compatible chat completions format
 	payload := map[string]interface{}{
 		"messages": []map[string]string{

@@ -365,9 +365,12 @@
                     <p><code>hop config</code> — configure Cloudflare (domaine + token)</p>
                     <p><code>hop config --show</code> — affiche la config</p>
                     <p><code>hop tunnel setup</code> — tunnel Cloudflare permanent</p>
-                    <p><code>hop ai &lt;question&gt;</code> — assistant AI (opt-in)</p>
-                    <p><code>hop send &lt;machine&gt; &lt;fichier-ou-url&gt;</code> — envoie fichier ou telecharge URL</p>
-                    <p><code>hop receive &lt;machine&gt; &lt;chemin&gt;</code> — recoit un fichier</p>
+                    <p><code>hop ai &lt;question&gt;</code> — assistant AI (Workers AI Cloudflare, opt-in)</p>
+                    <p><code>hop ai --enable</code> — active l'assistant AI</p>
+                    <p><code>hop ai --mcp &lt;url&gt;</code> — connecte un LLM externe via MCP (Claude, GPT, etc.)</p>
+                    <p><code>hop ai --limits</code> — affiche l'utilisation Workers AI</p>
+                    <p><code>hop send &lt;machine&gt; &lt;fichier-ou-url&gt;</code> — envoie fichier, dossier ou telecharge URL ; affiche taille, vitesse et checksum MD5</p>
+                    <p><code>hop receive &lt;machine&gt; &lt;chemin&gt;</code> — recoit un fichier depuis une machine distante</p>
                     <p><code>hop tunnel quick</code> — tunnel rapide via Pinggy (zero install)</p>
                     <p><code>hop export / import</code> — backup/restore chiffre</p>
                     <p><code>hop update</code> — mise a jour + checksum SHA256</p>
