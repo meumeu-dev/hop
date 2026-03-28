@@ -258,81 +258,7 @@ func loadCFCredentials(cfg *config.Config) (string, string, error) {
 	return accountID, apiKey, nil
 }
 
-// tryOllama checks if Ollama is running and returns the first available model.
-// Returns ("", false) if not available.
-func tryOllama() (string, bool) {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
-	if err != nil {
-		return "", false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", false
-	}
-
-	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", false
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", false
-	}
-
-	// Prefer llama3 variants, then whatever is available
-	for _, m := range result.Models {
-		if strings.HasPrefix(m.Name, "llama3") {
-			return m.Name, true
-		}
-	}
-	if len(result.Models) > 0 {
-		return result.Models[0].Name, true
-	}
-	return "", false
-}
-
 const systemPrompt = `Tu es l'assistant hop. Tu connais la config de l'utilisateur. Tu peux repondre en texte ou proposer une commande hop a executer. Si tu proposes une commande, prefixe-la avec CMD: sur une ligne separee. Reponds de maniere concise et utile.`
-
-// askOllama sends a prompt to Ollama and returns the response text.
-func askOllama(model, prompt string) (string, error) {
-	payload := map[string]interface{}{
-		"model":  model,
-		"prompt": prompt,
-		"stream": false,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post("http://localhost:11434/api/generate", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("ollama: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("ollama HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var result struct {
-		Response string `json:"response"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("parse ollama response: %w", err)
-	}
-	return result.Response, nil
-}
 
 // askWorkersAI sends a prompt to Cloudflare Workers AI and returns the response text.
 func validateAccountID(id string) bool {
@@ -480,30 +406,9 @@ func runAIAsk(cfg *config.Config, question string) {
 	ctx := safeContext(cfg)
 	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nQuestion: %s", systemPrompt, ctx, question)
 
-	// Try Ollama first
-	if model, ok := tryOllama(); ok {
-		fmt.Printf("→ Ollama (%s) — donnees locales uniquement\n\n", model)
-		response, err := askOllama(model, fullPrompt)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Erreur Ollama: %v\n", err)
-			fmt.Fprintln(os.Stderr, "Tentative avec Workers AI...")
-		} else {
-			handleResponse(response)
-			return
-		}
-	}
-
-	// Fallback to Workers AI
 	accountID, apiKey, err := loadCFCredentials(cfg)
 	if err != nil || accountID == "" || apiKey == "" {
-		if accountID == "" {
-			fmt.Fprintln(os.Stderr, "Ollama non disponible et CF_ACCOUNT_ID non configure.")
-			fmt.Fprintln(os.Stderr, "Options :")
-			fmt.Fprintln(os.Stderr, "  - Installe Ollama : https://ollama.ai")
-			fmt.Fprintln(os.Stderr, "  - Ajoute CF_ACCOUNT_ID=xxx dans cloudflare.env et reconfigure (hop config)")
-		} else {
-			fmt.Fprintln(os.Stderr, "Ollama non disponible et CF_API_KEY non configure (hop config).")
-		}
+		fmt.Fprintln(os.Stderr, "Cloudflare non configure (hop config).")
 		os.Exit(1)
 	}
 

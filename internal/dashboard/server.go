@@ -557,73 +557,6 @@ func dashSafeContext(cfg *config.Config) string {
 	return sb.String()
 }
 
-// dashTryOllama checks if Ollama is running and returns the first available model.
-func dashTryOllama() (string, bool) {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
-	if err != nil {
-		return "", false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", false
-	}
-	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", false
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", false
-	}
-	for _, m := range result.Models {
-		if strings.HasPrefix(m.Name, "llama3") {
-			return m.Name, true
-		}
-	}
-	if len(result.Models) > 0 {
-		return result.Models[0].Name, true
-	}
-	return "", false
-}
-
-// dashAskOllama sends a prompt to Ollama and returns the response text.
-func dashAskOllama(model, prompt string) (string, error) {
-	payload := map[string]interface{}{
-		"model":  model,
-		"prompt": prompt,
-		"stream": false,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Post("http://localhost:11434/api/generate", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return "", fmt.Errorf("ollama: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("ollama HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-	var result struct {
-		Response string `json:"response"`
-	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", fmt.Errorf("parse ollama response: %w", err)
-	}
-	return result.Response, nil
-}
-
 // dashLoadCFCredentials reads CF_ACCOUNT_ID and CF_API_KEY from cloudflare.env.
 func dashLoadCFCredentials(cfg *config.Config) (string, string, error) {
 	envPath := cfg.Cloudflare.EnvFile
@@ -760,30 +693,18 @@ func handleAI(w http.ResponseWriter, r *http.Request) {
 	ctx := dashSafeContext(cfg)
 	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nQuestion: %s", dashAISystemPrompt, ctx, req.Question)
 
-	var rawResponse, source string
-
-	// Try Ollama first
-	if model, ok := dashTryOllama(); ok {
-		rawResponse, err = dashAskOllama(model, fullPrompt)
-		if err == nil {
-			source = "ollama:" + model
-		}
+	accountID, apiKey, cfErr := dashLoadCFCredentials(cfg)
+	if cfErr != nil || accountID == "" || apiKey == "" {
+		jsonError(w, "Cloudflare Workers AI non configure (hop config)", 503)
+		return
 	}
 
-	// Fallback to Workers AI
-	if rawResponse == "" {
-		accountID, apiKey, cfErr := dashLoadCFCredentials(cfg)
-		if cfErr != nil || accountID == "" || apiKey == "" {
-			jsonError(w, "Ollama non disponible et Cloudflare Workers AI non configure", 503)
-			return
-		}
-		rawResponse, err = dashAskWorkersAI(accountID, apiKey, fullPrompt)
-		if err != nil {
-			jsonError(w, err.Error(), 503)
-			return
-		}
-		source = "workers_ai"
+	rawResponse, err := dashAskWorkersAI(accountID, apiKey, fullPrompt)
+	if err != nil {
+		jsonError(w, err.Error(), 503)
+		return
 	}
+	source := "workers_ai"
 
 	text, cmd := dashParseResponse(rawResponse)
 

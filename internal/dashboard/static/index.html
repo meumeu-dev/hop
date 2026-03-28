@@ -429,7 +429,7 @@
                     <p>L'assistant IA n'est pas active.</p>
                     <p style="margin-top:8px;">Pour l'activer, lance dans un terminal :</p>
                     <p style="margin-top:8px;"><code>hop ai --enable</code></p>
-                    <p style="margin-top:8px; font-size:12px;">Il connait tes machines, services et aliases, et peut proposer des commandes hop a executer. Utilise Ollama en local si disponible (zero fuite de donnees), sinon Cloudflare Workers AI.</p>
+                    <p style="margin-top:8px; font-size:12px;">Il connait tes machines, services et aliases, et peut proposer des commandes hop a executer. Utilise Cloudflare Workers AI (CF requis).</p>
                 </div>
             </div>
             <div id="ai-chat-wrap" style="display:none;">
@@ -774,7 +774,7 @@
             if (source && role === 'bot') {
                 const src = document.createElement('div');
                 src.className = 'ai-source';
-                src.textContent = source.startsWith('ollama:') ? 'Ollama (' + source.slice(7) + ') — local' : 'Cloudflare Workers AI';
+                src.textContent = 'Cloudflare Workers AI';
                 wrap.appendChild(src);
             }
 

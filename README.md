@@ -111,7 +111,7 @@ Par defaut hop est en **mode sandbox** : la config est dans `/tmp/` et disparait
 | `hop version [--check]` | Affiche la version |
 | `hop dashboard` | Interface web (local / reseau / tunnel) |
 | `hop completion [bash\|zsh\|fish]` | Autocompletion shell |
-| `hop ai <question>` | Assistant AI (opt-in, Ollama local ou Workers AI) |
+| `hop ai <question>` | Assistant AI (opt-in, Workers AI — CF requis) |
 | `hop ai --enable/--disable` | Active/desactive l'AI |
 
 ## Pairing
