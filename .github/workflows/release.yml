@@ -58,8 +58,47 @@ jobs:
             ${{ matrix.name }}
             ${{ matrix.name }}.sha256
 
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        working-directory: mobile
+        run: gradle assembleRelease
+
+      - name: Sign APK
+        working-directory: mobile
+        run: |
+          cp app/build/outputs/apk/release/app-release-unsigned.apk hop-android.apk
+          keytool -genkeypair -v -keystore release.keystore -alias hop -keyalg RSA -keysize 2048 -validity 10000 -storepass hopdev123 -keypass hopdev123 -dname "CN=hop,O=meumeu-dev"
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -1)
+          $APKSIGNER sign --ks release.keystore --ks-pass pass:hopdev123 --key-pass pass:hopdev123 --ks-key-alias hop hop-android.apk
+
+      - name: Generate checksum
+        working-directory: mobile
+        run: sha256sum hop-android.apk > hop-android.apk.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hop-android.apk
+          path: |
+            mobile/hop-android.apk
+            mobile/hop-android.apk.sha256
+
   release:
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
