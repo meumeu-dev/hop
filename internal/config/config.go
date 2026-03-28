@@ -18,7 +18,8 @@ type Config struct {
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
 	WorkerURL  string             `yaml:"worker_url,omitempty"`
-	AIEnabled  bool               `yaml:"ai_enabled,omitempty"`
+	AIEnabled   bool   `yaml:"ai_enabled,omitempty"`
+	MCPEndpoint string `yaml:"mcp_endpoint,omitempty"`
 }
 
 type Machine struct {

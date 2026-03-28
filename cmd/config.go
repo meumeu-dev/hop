@@ -67,6 +67,17 @@ func runConfigShow() {
 	} else {
 		fmt.Printf("Worker:    %s (defaut)\n", pairing.DefaultWorkerURL)
 	}
+
+	if cfg.MCPEndpoint != "" {
+		fmt.Printf("MCP:       %s\n", cfg.MCPEndpoint)
+	}
+
+	fmt.Printf("AI:        ")
+	if cfg.AIEnabled {
+		fmt.Println("active")
+	} else {
+		fmt.Println("desactive")
+	}
 }
 
 func runConfigCF() {

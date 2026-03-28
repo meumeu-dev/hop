@@ -19,6 +19,7 @@ import (
 var aiEnable bool
 var aiDisable bool
 var aiLimits bool
+var aiMCP string
 
 var aiCmd = &cobra.Command{
 	Use:   "ai <question>",
@@ -42,6 +43,20 @@ Examples:
 			os.Exit(1)
 		}
 
+		if aiMCP != "" {
+			if aiMCP == "off" || aiMCP == "reset" {
+				cfg.MCPEndpoint = ""
+				cfg.Save()
+				fmt.Println("→ MCP desactive. Workers AI sera utilise.")
+			} else {
+				cfg.MCPEndpoint = aiMCP
+				cfg.AIEnabled = true
+				cfg.Save()
+				fmt.Printf("→ MCP configure: %s\n", aiMCP)
+			}
+			return
+		}
+
 		if aiEnable {
 			runAIEnable(cfg)
 			return
@@ -56,13 +71,17 @@ Examples:
 		}
 
 		if !cfg.AIEnabled {
-			fmt.Println("hop ai — assistant IA (necessite Cloudflare)")
+			fmt.Println("hop ai — assistant IA")
 			fmt.Println()
 			fmt.Println("Cet assistant connait ta config (machines, services, aliases) et peut")
 			fmt.Println("repondre a tes questions ou proposer des commandes hop a executer.")
 			fmt.Println()
-			fmt.Println("Utilise Cloudflare Workers AI (gratuit avec ton token CF).")
-			fmt.Println("Configure d'abord: hop config")
+			fmt.Println("Sources IA :")
+			fmt.Println("  - MCP : connecte n'importe quel LLM (Claude, GPT, etc.)")
+			fmt.Println("  - Workers AI : Cloudflare gratuit (hop config)")
+			fmt.Println()
+			fmt.Println("Pour activer : hop ai --enable")
+			fmt.Println("Pour MCP    : hop ai --mcp https://mon-endpoint/v1/chat/completions")
 			fmt.Println()
 			fmt.Println("Pour activer : hop ai --enable")
 			return
@@ -402,23 +421,112 @@ func runHopCommand(cmd string) {
 	}
 }
 
+// askMCP sends a prompt to an MCP-compatible endpoint
+func askMCP(endpoint string, prompt string) (string, error) {
+	// MCP uses OpenAI-compatible chat completions format
+	payload := map[string]interface{}{
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": prompt},
+		},
+		"stream": false,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	req, err := http.NewRequest("POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("MCP: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("MCP HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Try OpenAI format first
+	var oaiResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBody, &oaiResp); err == nil && len(oaiResp.Choices) > 0 {
+		return oaiResp.Choices[0].Message.Content, nil
+	}
+
+	// Try simple format
+	var simpleResp struct {
+		Response string `json:"response"`
+		Result   string `json:"result"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal(respBody, &simpleResp); err == nil {
+		if simpleResp.Response != "" {
+			return simpleResp.Response, nil
+		}
+		if simpleResp.Result != "" {
+			return simpleResp.Result, nil
+		}
+		if simpleResp.Content != "" {
+			return simpleResp.Content, nil
+		}
+	}
+
+	return string(respBody), nil
+}
+
 func runAIAsk(cfg *config.Config, question string) {
 	ctx := safeContext(cfg)
 	fullPrompt := fmt.Sprintf("%s\n\n%s\n\nQuestion: %s", systemPrompt, ctx, question)
 
-	accountID, apiKey, err := loadCFCredentials(cfg)
-	if err != nil || accountID == "" || apiKey == "" {
-		fmt.Fprintln(os.Stderr, "Cloudflare non configure (hop config).")
-		os.Exit(1)
+	var response string
+	var err error
+
+	// Priority 1: MCP endpoint if configured
+	if cfg.MCPEndpoint != "" {
+		fmt.Printf("→ MCP (%s)\n\n", cfg.MCPEndpoint)
+		response, err = askMCP(cfg.MCPEndpoint, fullPrompt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur MCP: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Fallback Workers AI...")
+		}
 	}
 
-	fmt.Println("→ Cloudflare Workers AI (@cf/meta/llama-3.3-70b-instruct-fp8-fast)")
-	fmt.Println()
-	response, err := askWorkersAI(accountID, apiKey, fullPrompt)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur Workers AI: %v\n", err)
-		os.Exit(1)
+	// Priority 2: Workers AI
+	if response == "" {
+		accountID, apiKey, cfErr := loadCFCredentials(cfg)
+		if cfErr != nil || accountID == "" || apiKey == "" {
+			if cfg.MCPEndpoint == "" {
+				fmt.Fprintln(os.Stderr, "Ni MCP ni Cloudflare configure (hop config).")
+			} else {
+				fmt.Fprintln(os.Stderr, "MCP echoue et Cloudflare non configure.")
+			}
+			os.Exit(1)
+		}
+
+		fmt.Println("→ Cloudflare Workers AI (llama-3.3-70b)")
+		fmt.Println()
+		response, err = askWorkersAI(accountID, apiKey, fullPrompt)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur Workers AI: %v\n", err)
+			os.Exit(1)
+		}
 	}
+
 	handleResponse(response)
 }
 
@@ -426,5 +534,6 @@ func init() {
 	aiCmd.Flags().BoolVar(&aiEnable, "enable", false, "Active l'assistant IA")
 	aiCmd.Flags().BoolVar(&aiDisable, "disable", false, "Desactive l'assistant IA")
 	aiCmd.Flags().BoolVar(&aiLimits, "limits", false, "Affiche l'utilisation Workers AI")
+	aiCmd.Flags().StringVar(&aiMCP, "mcp", "", "Configure un endpoint MCP (URL ou 'off')")
 	rootCmd.AddCommand(aiCmd)
 }
