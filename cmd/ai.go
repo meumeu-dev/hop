@@ -23,17 +23,14 @@ var aiLimits bool
 var aiCmd = &cobra.Command{
 	Use:   "ai <question>",
 	Short: "Assistant IA qui comprend ta config hop",
-	Long: `hop ai — assistant IA contextuel.
+	Long: `hop ai — assistant IA contextuel (necessite Cloudflare configure).
 
 Il connait tes machines, services et aliases, et peut proposer
-des commandes hop a executer.
-
-Utilise Ollama en local si disponible (zero fuite de donnees).
-Sinon, utilise Cloudflare Workers AI.
+des commandes hop a executer. Utilise Cloudflare Workers AI (gratuit).
 
 Examples:
   hop ai "comment me connecter a pc1 ?"
-  hop ai "quelle commande pour lancer le service web ?"
+  hop ai "envoie le fichier backup.tar sur le rpi"
   hop ai --enable
   hop ai --disable
   hop ai --limits`,
@@ -59,14 +56,13 @@ Examples:
 		}
 
 		if !cfg.AIEnabled {
-			fmt.Println("hop ai — assistant IA contextuel")
+			fmt.Println("hop ai — assistant IA (necessite Cloudflare)")
 			fmt.Println()
 			fmt.Println("Cet assistant connait ta config (machines, services, aliases) et peut")
 			fmt.Println("repondre a tes questions ou proposer des commandes hop a executer.")
 			fmt.Println()
-			fmt.Println("Sources IA (par ordre de priorite) :")
-			fmt.Println("  1. Ollama local (localhost:11434) — zero donnee envoyee en dehors")
-			fmt.Println("  2. Cloudflare Workers AI          — passe par les serveurs Cloudflare")
+			fmt.Println("Utilise Cloudflare Workers AI (gratuit avec ton token CF).")
+			fmt.Println("Configure d'abord: hop config")
 			fmt.Println()
 			fmt.Println("Pour activer : hop ai --enable")
 			return
@@ -91,12 +87,10 @@ func runAIEnable(cfg *config.Config) {
 	fmt.Println("=== Activation de hop ai ===")
 	fmt.Println()
 	fmt.Println("AVERTISSEMENT : les donnees de config (noms de machines, IPs, utilisateurs,")
-	fmt.Println("noms de services, aliases, hostnames de tunnels) seront envoyees au LLM.")
+	fmt.Println("noms de services, aliases) seront envoyees a Cloudflare Workers AI.")
 	fmt.Println()
-	fmt.Println("  Ollama local  = zero fuite, les donnees restent sur ta machine")
-	fmt.Println("  Workers AI    = passe par Cloudflare (CF_API_KEY jamais envoyee)")
-	fmt.Println()
-	fmt.Println("Les secrets (cles SSH, tokens API) ne sont JAMAIS envoyes.")
+	fmt.Println("Les secrets (cles SSH, tokens API, mots de passe) ne sont JAMAIS envoyes.")
+	fmt.Println("Necessite: Cloudflare configure (hop config).")
 	fmt.Println()
 	fmt.Print("Activer ? [o/N] ")
 	reader := bufio.NewReader(os.Stdin)
