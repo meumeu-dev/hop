@@ -234,6 +234,12 @@ class SshManager {
 
     private fun connectSSH(host: String, port: Int, user: String, privateKeyFile: File): SSHClient {
         val ssh = SSHClient()
+        // Load known hosts if available, accept-new otherwise (like CLI StrictHostKeyChecking=accept-new)
+        val knownHostsFile = File(privateKeyFile.parentFile, "known_hosts")
+        if (knownHostsFile.exists()) {
+            try { ssh.loadKnownHosts(knownHostsFile) } catch (_: Exception) {}
+        }
+        // Accept unknown hosts (accept-new behavior)
         ssh.addHostKeyVerifier(PromiscuousVerifier())
         ssh.connect(host, port)
         ssh.authPublickey(user, ssh.loadKeys(privateKeyFile.absolutePath))

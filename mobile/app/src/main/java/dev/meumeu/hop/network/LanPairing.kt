@@ -109,7 +109,7 @@ object LanPairing {
                 // Check for TCP response
                 try {
                     val client = tcpServer.accept()
-                    val responseBytes = client.getInputStream().readBytes()
+                    val responseBytes = client.getInputStream().readNBytes(65536)
                     client.close()
 
                     val decrypted = HopCrypto.decrypt(String(responseBytes), code)

@@ -709,7 +709,7 @@ func handleAI(w http.ResponseWriter, r *http.Request) {
 
 	rawResponse, err := dashAskWorkersAI(accountID, apiKey, fullPrompt)
 	if err != nil {
-		jsonError(w, err.Error(), 503)
+		jsonError(w, "erreur AI", 503)
 		return
 	}
 	source := "workers_ai"
@@ -805,13 +805,13 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 
 	session := &pairing.PairSession{PairID: pairID, Token: token, Code: code}
 	if err := pairing.SendResponse(session, response); err != nil {
-		jsonError(w, err.Error(), 500)
+		jsonError(w, "erreur envoi reponse", 500)
 		return
 	}
 
 	// Add server's key locally
 	if err := pairing.AddAuthorizedKey(serverData.PublicKey); err != nil {
-		jsonError(w, err.Error(), 500)
+		jsonError(w, "erreur ajout cle SSH", 500)
 		return
 	}
 
@@ -895,7 +895,7 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 
 	session, err := pairing.PublishPairData(code, data)
 	if err != nil {
-		jsonError(w, err.Error(), 500)
+		jsonError(w, "erreur connexion relay", 500)
 		return
 	}
 
@@ -983,6 +983,5 @@ func handlePairStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status": "waiting",
-		"token":  activePairToken,
 	})
 }

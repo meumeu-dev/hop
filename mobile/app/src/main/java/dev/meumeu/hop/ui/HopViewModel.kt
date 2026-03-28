@@ -82,17 +82,26 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(message = null)
     }
 
-    /** Write token to file accessible via adb */
+    /** Write token to file accessible via adb (internal storage, deleted after use) */
     private fun writeTokenForAdb(token: String) {
         try {
             val context = getApplication<Application>()
-            val tokenFile = File(context.getExternalFilesDir(null), "pairing_token.txt")
+            // Use internal storage (not external) — only accessible via adb run-as or root
+            val tokenFile = File(context.filesDir, "pairing_token.txt")
             tokenFile.writeText(token)
             Log.i(TAG, "Token written to: ${tokenFile.absolutePath}")
-            Log.i(TAG, "adb shell cat ${tokenFile.absolutePath}")
+            Log.i(TAG, "adb shell run-as dev.meumeu.hop cat files/pairing_token.txt")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to write token file: ${e.message}")
         }
+    }
+
+    private fun clearTokenFile() {
+        try {
+            val context = getApplication<Application>()
+            val tokenFile = File(context.filesDir, "pairing_token.txt")
+            tokenFile.delete()
+        } catch (_: Exception) {}
     }
 
     // --- Pairing: host mode (relay) ---
@@ -127,7 +136,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                 val session = client.publishPairData(code, pairData)
 
                 val fullToken = "${session.pairId}.$code.${session.token}"
-                Log.i(TAG, "Pairing token: $fullToken")
+                Log.i(TAG, "Pairing token generated (${fullToken.take(8)}...)")
                 writeTokenForAdb(fullToken)
 
                 _state.value = _state.value.copy(
@@ -139,6 +148,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                 val resultData = raceRelayAndLan(client, session, code, pairData)
 
                 savePairedMachine(resultData)
+                clearTokenFile()
 
                 Log.i(TAG, "Pairing success: ${resultData.hostname}")
                 _state.value = _state.value.copy(
@@ -150,6 +160,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Pairing host failed", e)
+                clearTokenFile()
                 _state.value = _state.value.copy(
                     isPairing = false,
                     pairingCode = null,
