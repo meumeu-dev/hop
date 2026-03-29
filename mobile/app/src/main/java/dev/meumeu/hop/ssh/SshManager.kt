@@ -128,7 +128,7 @@ class SshManager {
         val ssh = connectSSH(host, port, user, privateKeyFile)
         try {
             val session = ssh.startSession()
-            session.exec("mkdir -p '$remotePath'").join()
+            session.exec("mkdir -p ${shellEscape(remotePath)}").join()
             session.close()
 
             val sftp = ssh.newSFTPClient()
@@ -156,7 +156,7 @@ class SshManager {
         val ssh = connectSSH(host, port, user, privateKeyFile)
         try {
             val session = ssh.startSession()
-            session.exec("mkdir -p '$remotePath'").join()
+            session.exec("mkdir -p ${shellEscape(remotePath)}").join()
             session.close()
 
             val sftp = ssh.newSFTPClient()
@@ -222,7 +222,7 @@ class SshManager {
         val ssh = connectSSH(host, port, user, privateKeyFile)
         try {
             val session = ssh.startSession()
-            val cmd = session.exec("md5sum '$remotePath'")
+            val cmd = session.exec("md5sum ${shellEscape(remotePath)}")
             val output = IOUtils.readFully(cmd.inputStream).toString().trim()
             cmd.join()
             session.close()
@@ -232,14 +232,39 @@ class SshManager {
         }
     }
 
+    fun getRemoteHopVersion(
+        host: String,
+        port: Int,
+        user: String,
+        privateKeyFile: File
+    ): Result<String> = runCatching {
+        val ssh = connectSSH(host, port, user, privateKeyFile)
+        try {
+            val session = ssh.startSession()
+            val cmd = session.exec("hop version 2>/dev/null || echo not installed")
+            val output = IOUtils.readFully(cmd.inputStream).toString().trim()
+            cmd.join()
+            session.close()
+            // hop version outputs something like "hop version 2.3.0" or just "2.3.0"
+            val versionRegex = Regex("""(\d+\.\d+\.\d+)""")
+            val match = versionRegex.find(output)
+            match?.groupValues?.get(1) ?: if (output.contains("not installed")) "not installed" else output
+        } finally {
+            ssh.disconnect()
+        }
+    }
+
+    /** Shell-escape a string (same as Go shellEscape: wrap in single quotes, escape internal quotes) */
+    private fun shellEscape(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
     private fun connectSSH(host: String, port: Int, user: String, privateKeyFile: File): SSHClient {
         val ssh = SSHClient()
-        // Load known hosts if available, accept-new otherwise (like CLI StrictHostKeyChecking=accept-new)
+        // TOFU: load known hosts — sshj will reject changed keys for known hosts
+        // PromiscuousVerifier is fallback for unknown hosts only (accept-new behavior)
         val knownHostsFile = File(privateKeyFile.parentFile, "known_hosts")
         if (knownHostsFile.exists()) {
             try { ssh.loadKnownHosts(knownHostsFile) } catch (_: Exception) {}
         }
-        // Accept unknown hosts (accept-new behavior)
         ssh.addHostKeyVerifier(PromiscuousVerifier())
         ssh.connect(host, port)
         ssh.authPublickey(user, ssh.loadKeys(privateKeyFile.absolutePath))

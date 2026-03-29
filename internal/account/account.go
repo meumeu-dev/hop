@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"net/url"
+
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/meumeu-dev/hop/internal/pairing"
 	"golang.org/x/crypto/argon2"
@@ -65,7 +67,7 @@ func deriveDataKey(email, password string) string {
 
 // fetchSalt gets the random salt for an email from the server (step 1 of login)
 func (c *Client) fetchSalt(email string) (string, error) {
-	resp, err := c.httpClient.Get(c.workerURL + "/auth/salt?email=" + email)
+	resp, err := c.httpClient.Get(c.workerURL + "/auth/salt?email=" + url.QueryEscape(email))
 	if err != nil {
 		return "", fmt.Errorf("connexion: %w", err)
 	}

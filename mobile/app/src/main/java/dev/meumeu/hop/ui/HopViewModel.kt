@@ -22,6 +22,8 @@ import dev.meumeu.hop.network.PairSession
 import dev.meumeu.hop.network.PairingClient
 import dev.meumeu.hop.ssh.SshManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -51,7 +53,10 @@ data class HopUiState(
     // Update state
     val updateAvailable: Boolean = false,
     val updateVersion: String? = null,
-    val isUpdating: Boolean = false
+    val isUpdating: Boolean = false,
+    // Machine version state
+    val machineVersions: Map<String, String> = emptyMap(),
+    val isCheckingVersions: Boolean = false
 )
 
 class HopViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,10 +71,12 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         Log.i(TAG, "Hop Android starting")
+        clearTokenFile() // Clean stale pairing token from previous crash
         loadConfig()
         ensureKeys()
         loadSession()
         checkForUpdate()
+        checkMachineVersions()
     }
 
     private fun loadConfig() {
@@ -147,7 +154,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     ip = localIPs.firstOrNull(),
                     user = "hop",
                     publicKey = pubKey,
-                    version = "2.1.0-android"
+                    version = "2.2.0-android"
                 )
 
                 val workerUrl = hopConfig.load().workerUrl
@@ -272,7 +279,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     ip = localIPs.firstOrNull(),
                     user = "hop",
                     publicKey = pubKey,
-                    version = "2.1.0-android"
+                    version = "2.2.0-android"
                 )
 
                 val session = PairSession(pairId = pairId, token = workerToken, code = code)
@@ -316,7 +323,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     ip = localIPs.firstOrNull(),
                     user = "hop",
                     publicKey = pubKey,
-                    version = "2.1.0-android"
+                    version = "2.2.0-android"
                 )
 
                 val hostData = LanPairing.joinLAN(code, myData, 120_000)
@@ -495,6 +502,45 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(TAG, "Removing machine: $name")
         hopConfig.removeMachine(name)
         loadConfig()
+    }
+
+    // --- Machine version checking ---
+
+    private fun checkMachineVersions() {
+        val config = hopConfig.load()
+        if (config.machines.isEmpty()) return
+
+        _state.value = _state.value.copy(isCheckingVersions = true)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val results = config.machines.map { (name, machine) ->
+                async {
+                    val version = try {
+                        val host = findReachableHost(machine)
+                        sshManager.getRemoteHopVersion(
+                            host = host,
+                            port = 22,
+                            user = machine.user,
+                            privateKeyFile = hopConfig.privateKeyFile
+                        ).getOrDefault("?")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Version check failed for $name: ${e.message}")
+                        "offline"
+                    }
+                    name to version
+                }
+            }.awaitAll().toMap()
+
+            Log.i(TAG, "Machine versions: $results")
+            _state.value = _state.value.copy(
+                machineVersions = results,
+                isCheckingVersions = false
+            )
+        }
+    }
+
+    fun refreshVersions() {
+        checkMachineVersions()
     }
 
     // --- Account ---

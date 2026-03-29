@@ -8,6 +8,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.params.Argon2Parameters
+import java.net.URLEncoder
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -105,7 +106,7 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
     /** Fetch the random salt for an email (step 1 of login) */
     private fun fetchSalt(email: String): String {
         val request = Request.Builder()
-            .url("$workerUrl/auth/salt?email=$email")
+            .url("$workerUrl/auth/salt?email=${URLEncoder.encode(email, "UTF-8")}")
             .get()
             .build()
 

@@ -105,6 +105,57 @@
         .tag.green { background: #23863633; color: #3fb950; }
         .tag.red { background: #f8514933; color: #f85149; }
         .tag.gray { background: #8b949e33; color: #8b949e; }
+        .tag.orange { background: #d2992233; color: #d29922; }
+        .btn-update {
+            background: #1f6feb;
+            color: #fff;
+            border: 1px solid #1f6feb;
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-right: 4px;
+        }
+        .btn-update:hover { background: #1a60d2; }
+        .btn-update:disabled { background: #30363d; border-color: #30363d; cursor: default; }
+        .btn-update-all {
+            background: #1f6feb;
+            color: #fff;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-left: 8px;
+        }
+        .btn-update-all:hover { background: #1a60d2; }
+        .btn-update-all:disabled { background: #30363d; cursor: default; }
+        .update-output {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 12px;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            color: #8b949e;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        .spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #30363d;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 4px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .modal-overlay {
             display: none;
             position: fixed;
@@ -293,8 +344,15 @@
     <div class="container page active" id="page-local">
         <div class="grid">
             <div class="card">
-                <h2>Machines <button onclick="openModal('machine')">+ Ajouter</button></h2>
+                <h2>Machines
+                    <span>
+                        <button onclick="checkVersions()" id="btn-check-versions" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;margin-right:4px;">Versions</button>
+                        <button class="btn-update-all" onclick="updateAllMachines()" id="btn-update-all" style="display:none;">Tout mettre a jour</button>
+                        <button onclick="openModal('machine')">+ Ajouter</button>
+                    </span>
+                </h2>
                 <div id="machines-list"></div>
+                <div id="update-output" class="update-output"></div>
             </div>
 
             <div class="card">
@@ -519,23 +577,40 @@
         }
 
         // --- Render ---
+        let machineVersions = {};
+
         function renderMachines(machines) {
             const el = document.getElementById('machines-list');
             const keys = Object.keys(machines).sort();
             if (keys.length === 0) {
                 el.innerHTML = '<p class="empty">Aucune machine configuree</p>';
+                document.getElementById('btn-update-all').style.display = 'none';
                 return;
             }
-            let html = '<table><tr><th>Nom</th><th>Connexion</th><th>Services</th><th></th></tr>';
+            if (keys.length > 1) {
+                document.getElementById('btn-update-all').style.display = 'inline-block';
+            }
+            let html = '<table><tr><th>Nom</th><th>Connexion</th><th>Version</th><th>Services</th><th></th></tr>';
             for (const name of keys) {
                 const m = machines[name];
                 const svcs = m.services ? Object.keys(m.services).map(s => `<span class="tag">${esc(s)}</span>`).join('') : '';
                 const tunnel = m.tunnel ? ` <span class="tag green">tunnel</span>` : '';
+                let versionBadge = '<span id="ver-' + escAttr(name) + '" class="tag gray">--</span>';
+                if (machineVersions[name]) {
+                    const v = machineVersions[name];
+                    if (v.version) {
+                        versionBadge = '<span id="ver-' + escAttr(name) + '" class="tag green">v' + esc(v.version) + '</span>';
+                    } else if (v.error) {
+                        versionBadge = '<span id="ver-' + escAttr(name) + '" class="tag red" title="' + escAttr(v.error) + '">' + esc(v.error) + '</span>';
+                    }
+                }
                 html += `<tr>
                     <td><strong>${esc(name)}</strong></td>
                     <td>${esc(m.user)}@${esc(m.ip)}${tunnel}</td>
+                    <td>${versionBadge}</td>
                     <td>${svcs}</td>
                     <td class="actions">
+                        <button class="btn-update" id="upd-${escAttr(name)}" onclick="updateMachine('${escAttr(name)}')" title="Mettre a jour">MAJ</button>
                         <button onclick="editMachine('${escAttr(name)}')">Modifier</button>
                         <button class="danger" onclick="deleteMachine('${escAttr(name)}')">Supprimer</button>
                     </td>
@@ -941,6 +1016,108 @@
                 });
             }
         });
+
+        // --- Version check ---
+        async function checkVersions() {
+            const btn = document.getElementById('btn-check-versions');
+            btn.disabled = true;
+            btn.innerHTML = 'Verification...<span class="spinner"></span>';
+
+            try {
+                const res = await fetch(API + '/api/machines/versions');
+                const data = await res.json();
+                machineVersions = data;
+                // Re-render machines to show versions
+                const cfgRes = await fetch(API + '/api/config');
+                const cfg = await cfgRes.json();
+                renderMachines(cfg.machines || {});
+            } catch(e) {
+                console.error('Version check failed:', e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Versions';
+            }
+        }
+
+        // --- Machine update ---
+        async function updateMachine(name) {
+            const btn = document.getElementById('upd-' + name);
+            const output = document.getElementById('update-output');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner"></span>';
+            }
+            output.style.display = 'block';
+            output.textContent = 'Mise a jour de ' + name + ' en cours...\n';
+
+            try {
+                const res = await fetch(API + '/api/machines/update', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({name: name}),
+                });
+                const data = await res.json();
+                if (data.error) {
+                    output.textContent += 'Erreur: ' + data.error + '\n';
+                } else if (data[name]) {
+                    const r = data[name];
+                    output.textContent += r.output || '';
+                    if (r.error) {
+                        output.textContent += '\nErreur: ' + r.error;
+                    } else {
+                        output.textContent += '\nTermine avec succes.';
+                    }
+                }
+                // Refresh versions after update
+                checkVersions();
+            } catch(e) {
+                output.textContent += '\nErreur de connexion.';
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'MAJ';
+                }
+            }
+        }
+
+        async function updateAllMachines() {
+            const btn = document.getElementById('btn-update-all');
+            const output = document.getElementById('update-output');
+            btn.disabled = true;
+            btn.innerHTML = 'Mise a jour...<span class="spinner"></span>';
+            output.style.display = 'block';
+            output.textContent = 'Mise a jour de toutes les machines en cours...\n';
+
+            try {
+                const res = await fetch(API + '/api/machines/update', {
+                    method: 'POST',
+                    headers: authHeaders(),
+                    body: JSON.stringify({name: 'all'}),
+                });
+                const data = await res.json();
+                if (data.error) {
+                    output.textContent += 'Erreur: ' + data.error + '\n';
+                } else {
+                    for (const [name, r] of Object.entries(data)) {
+                        output.textContent += '\n--- ' + name + ' ---\n';
+                        output.textContent += r.output || '';
+                        if (r.error) {
+                            output.textContent += '\nErreur: ' + r.error;
+                        } else {
+                            output.textContent += '\nOK';
+                        }
+                        output.textContent += '\n';
+                    }
+                }
+                // Refresh versions after update
+                checkVersions();
+            } catch(e) {
+                output.textContent += '\nErreur de connexion.';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Tout mettre a jour';
+            }
+        }
 
         // --- Init ---
         initCSRF().then(() => loadConfig());

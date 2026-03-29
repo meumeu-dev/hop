@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"embed"
@@ -21,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/meumeu-dev/hop/internal/cloudflared"
 	"github.com/meumeu-dev/hop/internal/config"
 	"github.com/meumeu-dev/hop/internal/pairing"
 )
@@ -142,6 +144,8 @@ func registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/ping", handlePing)
 	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/api/machines", handleMachines)
+	mux.HandleFunc("/api/machines/versions", handleMachineVersions)
+	mux.HandleFunc("/api/machines/update", handleMachineUpdate)
 	mux.HandleFunc("/api/machines/", handleMachineDelete)
 	mux.HandleFunc("/api/services", handleServices)
 	mux.HandleFunc("/api/services/", handleServiceDelete)
@@ -189,7 +193,7 @@ func StartWithBind(port int, bind string, password string, open bool) error {
 	server := &http.Server{
 		Handler:      handler,
 		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 180 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 	return server.Serve(listener)
@@ -353,6 +357,223 @@ func handleMachineDelete(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w)
 }
 
+// --- SSH helpers for version check (mirrors cmd/root.go logic) ---
+
+func dashDetectTarget(m config.Machine) (target string, viaTunnel bool) {
+	// Try LAN first
+	if m.IP != "" {
+		conn, err := net.DialTimeout("tcp", m.IP+":22", 500*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return m.User + "@" + m.IP, false
+		}
+	}
+	// Try tunnel
+	if m.Tunnel != "" {
+		host, port, err := net.SplitHostPort(m.Tunnel)
+		if err == nil && host != "" && port != "" && port != "22" {
+			// Quick tunnel: host:port (Pinggy)
+			return m.User + "@" + host + ":" + port, false
+		}
+		// Cloudflare tunnel
+		return m.User + "@" + m.Tunnel, true
+	}
+	return "", false
+}
+
+func dashBuildSSHArgs(cfg *config.Config, target string, viaTunnel bool) ([]string, string) {
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
+	args := []string{"-i", hopKeyPath, "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=accept-new"}
+	if viaTunnel {
+		cfPath := cloudflared.Path()
+		proxyCmd := fmt.Sprintf("%s access ssh --hostname %%h", cfPath)
+		if cfg != nil && cfg.Cloudflare.CFServiceTokenID != "" && cfg.Cloudflare.CFServiceTokenSecret != "" {
+			proxyCmd += fmt.Sprintf(" --service-token-id %s --service-token-secret %s",
+				cfg.Cloudflare.CFServiceTokenID, cfg.Cloudflare.CFServiceTokenSecret)
+		}
+		args = append(args, "-o", "ProxyCommand="+proxyCmd)
+	}
+	cleanTarget := target
+	// Split off port if present (user@host:port)
+	if atIdx := strings.LastIndex(target, "@"); atIdx >= 0 {
+		hostPart := target[atIdx+1:]
+		if host, port, err := net.SplitHostPort(hostPart); err == nil {
+			args = append(args, "-p", port)
+			cleanTarget = target[:atIdx+1] + host
+		}
+	}
+	return args, cleanTarget
+}
+
+// --- Version check handler ---
+
+type versionResult struct {
+	Version string `json:"version"`
+	Error   string `json:"error,omitempty"`
+}
+
+func handleMachineVersions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+
+	configMu.Lock()
+	cfg, err := config.Load()
+	configMu.Unlock()
+	if err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	if len(cfg.Machines) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+		return
+	}
+
+	results := make(map[string]versionResult)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for name, machine := range cfg.Machines {
+		wg.Add(1)
+		go func(name string, machine config.Machine) {
+			defer wg.Done()
+
+			target, viaTunnel := dashDetectTarget(machine)
+			if target == "" {
+				mu.Lock()
+				results[name] = versionResult{Error: "injoignable"}
+				mu.Unlock()
+				return
+			}
+
+			sshArgs, sshTarget := dashBuildSSHArgs(cfg, target, viaTunnel)
+			sshArgs = append(sshArgs, "-o", "ConnectTimeout=10", sshTarget, "--", "hop version 2>/dev/null || echo unknown")
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
+			out, err := cmd.Output()
+			ver := strings.TrimSpace(string(out))
+
+			mu.Lock()
+			if err != nil || ver == "" {
+				results[name] = versionResult{Error: "erreur SSH"}
+			} else if ver == "unknown" {
+				results[name] = versionResult{Error: "hop non installe"}
+			} else {
+				results[name] = versionResult{Version: ver}
+			}
+			mu.Unlock()
+		}(name, machine)
+	}
+
+	wg.Wait()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
+// --- Update handler ---
+
+type updateReq struct {
+	Name string `json:"name"`
+}
+
+type updateResult struct {
+	Output string `json:"output"`
+	Error  string `json:"error,omitempty"`
+}
+
+func handleMachineUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		jsonError(w, "method not allowed", 405)
+		return
+	}
+	limitBody(w, r)
+
+	var req updateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "bad request", 400)
+		return
+	}
+	if req.Name == "" {
+		jsonError(w, "name requis", 400)
+		return
+	}
+
+	// Find the hop binary
+	hopBin, err := os.Executable()
+	if err != nil {
+		jsonError(w, "impossible de trouver le binaire hop", 500)
+		return
+	}
+
+	configMu.Lock()
+	cfg, err := config.Load()
+	configMu.Unlock()
+	if err != nil {
+		jsonError(w, "internal", 500)
+		return
+	}
+
+	// Determine which machines to update
+	var machineNames []string
+	if req.Name == "all" {
+		for name := range cfg.Machines {
+			machineNames = append(machineNames, name)
+		}
+	} else {
+		resolved := cfg.ResolveAlias(req.Name)
+		if _, ok := cfg.Machines[resolved]; !ok {
+			jsonError(w, "machine '"+req.Name+"' non trouvee", 404)
+			return
+		}
+		machineNames = []string{resolved}
+	}
+
+	if len(machineNames) == 0 {
+		jsonError(w, "aucune machine configuree", 400)
+		return
+	}
+
+	// Increase write timeout for long-running updates
+	w.Header().Set("Content-Type", "application/json")
+
+	results := make(map[string]updateResult)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	for _, name := range machineNames {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, hopBin, "push-update", "-y", name)
+			out, err := cmd.CombinedOutput()
+
+			mu.Lock()
+			if err != nil {
+				results[name] = updateResult{
+					Output: string(out),
+					Error:  err.Error(),
+				}
+			} else {
+				results[name] = updateResult{Output: string(out)}
+			}
+			mu.Unlock()
+		}(name)
+	}
+
+	wg.Wait()
+
+	json.NewEncoder(w).Encode(results)
+}
+
 func handleServices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		jsonError(w, "method not allowed", 405)
@@ -477,9 +698,14 @@ func handleCloudflare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write env file
+	// Write env file — strip newlines to prevent injection
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\n", "")
+		s = strings.ReplaceAll(s, "\r", "")
+		return s
+	}
 	envPath := filepath.Join(config.HopDir(), "cloudflare.env")
-	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", req.Email, req.Domain, req.APIKey)
+	envContent := fmt.Sprintf("CF_USER=%s\nCF_DOMAIN=%s\nCF_API_KEY=%s\n", sanitize(req.Email), sanitize(req.Domain), sanitize(req.APIKey))
 	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
 		jsonError(w, "cannot write env file", 500)
 		return
