@@ -49,24 +49,35 @@ export default {
         return jsonResponse({ error: "invalid username" }, 400, cors);
       }
 
-      // Rate limit: max 5 registrations per IP per 15 min
+      // Rate limit: max 10 registrations per IP per 15 min
       const ip = request.headers.get("CF-Connecting-IP") || "unknown";
       const rlKey = `ratelimit:register:${ip}`;
       const rlCount = parseInt(await env.HOP_KV.get(rlKey) || "0");
-      if (rlCount >= 5) {
+      if (rlCount >= 10) {
         return jsonResponse({ error: "trop de tentatives, reessaie plus tard" }, 429, cors);
       }
       await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
 
       // Generic error to prevent enumeration
+      // Ignore stale/empty values from KV eventual consistency
       const existingEmail = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
-      if (existingEmail) {
-        return jsonResponse({ error: "inscription impossible" }, 409, cors);
+      if (existingEmail && existingEmail !== "" && existingEmail !== "DELETED") {
+        // Verify the account actually exists
+        const acctCheck = await env.HOP_KV.get(`account:${existingEmail}`);
+        if (acctCheck) {
+          return jsonResponse({ error: "inscription impossible" }, 409, cors);
+        }
+        // Stale index — clean it up
+        await env.HOP_KV.delete(`account:email:${email.toLowerCase()}`);
       }
 
       const existingUser = await env.HOP_KV.get(`account:user:${username.toLowerCase()}`);
-      if (existingUser) {
-        return jsonResponse({ error: "inscription impossible" }, 409, cors);
+      if (existingUser && existingUser !== "" && existingUser !== "DELETED") {
+        const acctCheck = await env.HOP_KV.get(`account:${existingUser}`);
+        if (acctCheck) {
+          return jsonResponse({ error: "inscription impossible" }, 409, cors);
+        }
+        await env.HOP_KV.delete(`account:user:${username.toLowerCase()}`);
       }
 
       const accountId = crypto.randomUUID();
