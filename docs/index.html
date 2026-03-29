@@ -166,8 +166,24 @@
         }
         footer a { color: #444; }
 
+        .dl-card {
+            display: flex; flex-direction: column;
+            background: #141722;
+            border: 1px solid #2a2e3d;
+            border-radius: 10px;
+            padding: 1rem 1.2rem;
+            text-decoration: none;
+            color: #e4e5ea;
+            transition: all 0.15s;
+        }
+        .dl-card:hover { border-color: #6c5ce7; background: #1a1d2a; color: #fff; }
+        .dl-icon { font-size: 1.4rem; margin-bottom: 0.3rem; }
+        .dl-card strong { font-size: 0.9rem; }
+        .dl-sub { font-size: 0.75rem; color: #6b7084; margin-top: 0.15rem; }
+
         @media (max-width: 600px) {
             .feat-grid { grid-template-columns: 1fr; }
+            .dl-grid { grid-template-columns: 1fr !important; }
             h1 { font-size: 1.6rem; }
         }
     </style>
@@ -202,8 +218,36 @@
                 </button>
             </div>
             <p class="install-note">
-                Linux &amp; macOS (amd64, arm64 — arm32 Linux only). Mise a jour: <code>hop update</code><br>
-                Windows: <a href="https://github.com/meumeu-dev/hop/releases" style="color:#6b7084">telecharger hop-windows-amd64.exe</a> depuis les releases.
+                Linux &amp; macOS (amd64, arm64 — arm32 Linux only). Mise a jour: <code>hop update</code>
+            </p>
+        </div>
+
+        <div class="install-section">
+            <h2>Autres plateformes</h2>
+            <div class="dl-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem;">
+                <a href="#" id="dl-android" class="dl-card">
+                    <span class="dl-icon">&#128241;</span>
+                    <strong>Android</strong>
+                    <span class="dl-sub">APK — QR scan, file transfer</span>
+                </a>
+                <a href="#" id="dl-windows" class="dl-card">
+                    <span class="dl-icon">&#128187;</span>
+                    <strong>Windows</strong>
+                    <span class="dl-sub">amd64 — hop-windows-amd64.exe</span>
+                </a>
+                <a href="#" id="dl-macos-arm" class="dl-card">
+                    <span class="dl-icon">&#63743;</span>
+                    <strong>macOS Apple Silicon</strong>
+                    <span class="dl-sub">arm64 — M1/M2/M3/M4</span>
+                </a>
+                <a href="#" id="dl-macos-intel" class="dl-card">
+                    <span class="dl-icon">&#63743;</span>
+                    <strong>macOS Intel</strong>
+                    <span class="dl-sub">amd64</span>
+                </a>
+            </div>
+            <p class="install-note" style="margin-top: 0.8rem;">
+                <a href="https://github.com/meumeu-dev/hop/releases/latest" style="color:#6b7084;">Toutes les releases + checksums SHA256</a>
             </p>
         </div>
 
@@ -308,12 +352,45 @@
         </footer>
     </div>
     <script>
-    fetch('https://api.github.com/repos/meumeu-dev/hop/releases/latest')
+    const REPO = 'meumeu-dev/hop';
+    const DL_MAP = {
+        'dl-android': 'hop-android.apk',
+        'dl-windows': 'hop-windows-amd64.exe',
+        'dl-macos-arm': 'hop-darwin-arm64',
+        'dl-macos-intel': 'hop-darwin-amd64',
+    };
+
+    fetch(`https://api.github.com/repos/${REPO}/releases/latest`)
         .then(r=>r.json()).then(d=>{
             const a=d.assets&&d.assets.find(a=>a.name==='hop-linux-amd64');
             if(a){const mb=(a.size/1024/1024).toFixed(1);document.getElementById('binSize').textContent='~'+mb+'MB';}
             if(d.tag_name)document.getElementById('ver').textContent=d.tag_name;
-        }).catch(()=>{});
+
+            // Set download links to latest release assets
+            if(d.assets){
+                for(const [id, name] of Object.entries(DL_MAP)){
+                    const asset = d.assets.find(a=>a.name===name);
+                    const el = document.getElementById(id);
+                    if(asset && el){
+                        el.href = asset.browser_download_url;
+                        // Show file size
+                        const size = asset.size > 1048576
+                            ? (asset.size/1048576).toFixed(1)+' MB'
+                            : (asset.size/1024).toFixed(0)+' KB';
+                        const sub = el.querySelector('.dl-sub');
+                        if(sub) sub.textContent += ' — ' + size;
+                    } else if(el) {
+                        el.href = `https://github.com/${REPO}/releases/latest`;
+                    }
+                }
+            }
+        }).catch(()=>{
+            // Fallback to releases page
+            for(const id of Object.keys(DL_MAP)){
+                const el = document.getElementById(id);
+                if(el) el.href = `https://github.com/${REPO}/releases/latest`;
+            }
+        });
     </script>
 </body>
 </html>
