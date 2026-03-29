@@ -80,11 +80,16 @@ jobs:
 
       - name: Sign APK
         working-directory: mobile
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           cp app/build/outputs/apk/release/app-release-unsigned.apk hop-android.apk
-          keytool -genkeypair -v -keystore release.keystore -alias hop -keyalg RSA -keysize 2048 -validity 10000 -storepass hopdev123 -keypass hopdev123 -dname "CN=hop,O=meumeu-dev"
+          echo "$ANDROID_KEYSTORE" | base64 -d > release.keystore
           APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -1)
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:hopdev123 --key-pass pass:hopdev123 --ks-key-alias hop hop-android.apk
+          $APKSIGNER sign --ks release.keystore --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" --key-pass "pass:$ANDROID_KEY_PASSWORD" --ks-key-alias "$ANDROID_KEY_ALIAS" hop-android.apk
 
       - name: Generate checksum
         working-directory: mobile
