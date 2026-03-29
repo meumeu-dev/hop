@@ -84,5 +84,9 @@ dependencies {
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("com.google.zxing:core:3.5.3")
 
+    // Test
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.bouncycastle:bcprov-jdk18on:1.79")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

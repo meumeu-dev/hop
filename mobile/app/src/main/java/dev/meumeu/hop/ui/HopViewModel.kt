@@ -90,22 +90,42 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = _state.value.copy(config = hopConfig.load())
     }
 
+    private var keysReady = false
+
     private fun ensureKeys() {
-        if (!hopConfig.hasKeys()) {
-            viewModelScope.launch(Dispatchers.IO) {
-                try {
-                    Log.i(TAG, "Generating SSH keys...")
-                    sshManager.generateEd25519KeyPair(
-                        hopConfig.privateKeyFile,
-                        hopConfig.publicKeyFile
-                    )
-                    Log.i(TAG, "SSH keys generated: ${hopConfig.publicKeyFile.absolutePath}")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Key generation failed", e)
-                    _state.value = _state.value.copy(error = "Erreur generation cles: ${e.message}")
-                }
+        if (hopConfig.hasKeys()) {
+            keysReady = true
+            Log.i(TAG, "SSH keys already exist")
+            return
+        }
+        // Generate synchronously on first launch to avoid race with pairing
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.i(TAG, "Generating SSH keys...")
+                sshManager.generateEd25519KeyPair(
+                    hopConfig.privateKeyFile,
+                    hopConfig.publicKeyFile
+                )
+                keysReady = true
+                Log.i(TAG, "SSH keys generated: ${hopConfig.publicKeyFile.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Key generation failed", e)
+                _state.value = _state.value.copy(error = "Erreur generation cles: ${e.message}")
             }
         }
+    }
+
+    private suspend fun waitForKeys() {
+        var attempts = 0
+        while (!keysReady && attempts < 30) {
+            kotlinx.coroutines.delay(200)
+            attempts++
+            if (hopConfig.hasKeys()) {
+                keysReady = true
+                break
+            }
+        }
+        if (!keysReady) throw Exception("Cles SSH non pretes — redemarrer l'app")
     }
 
     fun clearError() {
@@ -150,6 +170,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                waitForKeys()
                 val pubKey = hopConfig.getPublicKey() ?: throw Exception("Cle publique manquante")
                 val hostname = Build.MODEL.replace(" ", "-")
                 val localIPs = getLocalIPs()
@@ -288,6 +309,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     pairingStatus = "Trouve: ${hostData.hostname}\nEnvoi de nos infos..."
                 )
 
+                waitForKeys()
                 val pubKey = hopConfig.getPublicKey()
                 Log.i(TAG, "joinPairing pubKey=${pubKey?.take(30)}")
                 if (pubKey == null) throw Exception("Cle publique manquante — redemarrer l'app")
@@ -337,6 +359,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                waitForKeys()
                 val pubKey = hopConfig.getPublicKey() ?: throw Exception("Cle publique manquante")
                 val hostname = Build.MODEL.replace(" ", "-")
                 val localIPs = getLocalIPs()
@@ -347,7 +370,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     ip = localIPs.firstOrNull(),
                     user = "hop",
                     publicKey = pubKey,
-                    version = "2.2.0-android"
+                    version = getAppVersion() + "-android"
                 )
 
                 val hostData = LanPairing.joinLAN(code, myData, 120_000)
