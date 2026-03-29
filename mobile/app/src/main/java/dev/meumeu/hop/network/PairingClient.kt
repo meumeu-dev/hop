@@ -93,8 +93,12 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
     }
 
     fun sendResponse(session: PairSession, data: PairData) {
+        Log.d("HOP-PAIR", "sendResponse pairId=${session.pairId} codeLen=${session.code.length} tokenLen=${session.token.length}")
+        Log.d("HOP-PAIR", "sendResponse data: hostname=${data.hostname} user=${data.user} pubKeyLen=${data.publicKey.length}")
         val jsonData = gson.toJson(data).toByteArray()
+        Log.d("HOP-PAIR", "sendResponse jsonData: ${String(jsonData).take(100)}")
         val encrypted = HopCrypto.encrypt(jsonData, session.code)
+        Log.d("HOP-PAIR", "sendResponse encrypted: ${encrypted.take(40)}...")
 
         val body = gson.toJson(mapOf("data" to encrypted)).toRequestBody(jsonType)
         val request = Request.Builder()
