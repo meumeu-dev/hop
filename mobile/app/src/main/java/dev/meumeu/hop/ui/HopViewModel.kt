@@ -250,7 +250,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Pairing: join via token (relay) ---
     fun joinPairing(token: String) {
-        Log.i(TAG, "Joining pairing with token: ${token.take(20)}...")
+        Log.i(TAG, "joinPairing raw token: '${token}' (len=${token.length})")
         _state.value = _state.value.copy(
             isPairing = true,
             pairingStatus = "Connexion..."
@@ -259,27 +259,42 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val cleaned = token.trim()
+                Log.i(TAG, "joinPairing cleaned: '${cleaned.take(60)}' (len=${cleaned.length})")
+
                 val parts = cleaned.split(".", limit = 3)
-                if (parts.size != 3) throw Exception("Token invalide (format: pair_id.code.token)")
+                Log.i(TAG, "joinPairing parts: ${parts.size} -> [${parts.map { "'${it.take(20)}'" }}]")
+                if (parts.size != 3) throw Exception("Token invalide: ${parts.size} parties au lieu de 3")
 
                 val pairId = parts[0].trim()
                 val code = parts[1].trim()
                 val workerToken = parts[2].trim()
 
+                if (pairId.isEmpty()) throw Exception("pair_id vide")
+                if (code.isEmpty()) throw Exception("code vide")
+                if (workerToken.isEmpty()) throw Exception("worker token vide")
+
+                Log.i(TAG, "joinPairing pairId=$pairId code=$code tokenLen=${workerToken.length}")
+
                 val workerUrl = hopConfig.load().workerUrl
+                Log.i(TAG, "joinPairing worker=$workerUrl")
                 val client = PairingClient(workerUrl)
 
                 _state.value = _state.value.copy(pairingStatus = "Recuperation des donnees...")
+                Log.i(TAG, "joinPairing fetching pair data...")
                 val hostData = client.fetchPairData(pairId, code)
-                Log.i(TAG, "Found host: ${hostData.hostname} (${hostData.ip})")
+                Log.i(TAG, "joinPairing found: hostname=${hostData.hostname} ip=${hostData.ip}")
 
                 _state.value = _state.value.copy(
                     pairingStatus = "Trouve: ${hostData.hostname}\nEnvoi de nos infos..."
                 )
 
-                val pubKey = hopConfig.getPublicKey() ?: throw Exception("Cle publique manquante")
+                val pubKey = hopConfig.getPublicKey()
+                Log.i(TAG, "joinPairing pubKey=${pubKey?.take(30)}")
+                if (pubKey == null) throw Exception("Cle publique manquante — redemarrer l'app")
+
                 val hostname = Build.MODEL.replace(" ", "-")
                 val localIPs = getLocalIPs()
+                Log.i(TAG, "joinPairing hostname=$hostname ips=$localIPs")
 
                 val myData = PairData(
                     hostname = hostname,
@@ -287,12 +302,13 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     ip = localIPs.firstOrNull(),
                     user = "hop",
                     publicKey = pubKey,
-                    version = "2.2.0-android"
+                    version = getAppVersion() + "-android"
                 )
 
                 val session = PairSession(pairId = pairId, token = workerToken, code = code)
+                Log.i(TAG, "joinPairing sending response...")
                 client.sendResponse(session, myData)
-                Log.i(TAG, "Response sent to ${hostData.hostname}")
+                Log.i(TAG, "joinPairing response sent OK")
 
                 savePairedMachine(hostData)
 
@@ -302,10 +318,10 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     message = "Paire avec ${hostData.hostname}"
                 )
             } catch (e: Exception) {
-                Log.e(TAG, "Join pairing failed", e)
+                Log.e(TAG, "joinPairing FAILED: ${e.javaClass.simpleName}: ${e.message}", e)
                 _state.value = _state.value.copy(
                     isPairing = false,
-                    error = "Pairing echoue: ${e.message}"
+                    error = "Pairing echoue: ${e.javaClass.simpleName}: ${e.message}"
                 )
             }
         }

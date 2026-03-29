@@ -2,6 +2,7 @@ package dev.meumeu.hop.network
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import android.util.Log
 import dev.meumeu.hop.crypto.HopCrypto
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -63,21 +64,31 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
     }
 
     fun fetchPairData(pairId: String, code: String): PairData {
+        Log.d("HOP-PAIR", "fetchPairData pairId='$pairId' codeLen=${code.length}")
         val request = Request.Builder()
             .url("$workerUrl/pair/${pairId.trim()}")
             .get()
             .build()
 
         val response = client.newCall(request).execute()
-        if (response.code == 404) throw IllegalStateException("Pairing non trouve ou expire")
+        Log.d("HOP-PAIR", "fetchPairData response: ${response.code}")
+        if (response.code == 404) throw IllegalStateException("Pairing non trouve ou expire (2min TTL)")
         require(response.isSuccessful) { "Erreur serveur: HTTP ${response.code}" }
 
-        val body = response.body?.string() ?: throw IllegalStateException("Reponse vide")
-        val result = gson.fromJson(body, Map::class.java)
-        val encrypted = result["data"] as? String
-            ?: throw IllegalStateException("Donnees de pairing manquantes")
+        val bodyStr = response.body?.string()
+        Log.d("HOP-PAIR", "fetchPairData body: ${bodyStr?.take(100)}")
+        if (bodyStr.isNullOrBlank()) throw IllegalStateException("Reponse vide du serveur")
 
+        val result = gson.fromJson(bodyStr, Map::class.java)
+        val encrypted = result["data"] as? String
+        if (encrypted.isNullOrBlank()) {
+            Log.e("HOP-PAIR", "fetchPairData: 'data' field missing or null. Keys: ${result.keys}")
+            throw IllegalStateException("Donnees de pairing manquantes dans la reponse")
+        }
+
+        Log.d("HOP-PAIR", "fetchPairData decrypting ${encrypted.length} chars...")
         val decrypted = HopCrypto.decrypt(encrypted, code)
+        Log.d("HOP-PAIR", "fetchPairData decrypted: ${String(decrypted).take(100)}")
         return gson.fromJson(String(decrypted), PairData::class.java)
     }
 
