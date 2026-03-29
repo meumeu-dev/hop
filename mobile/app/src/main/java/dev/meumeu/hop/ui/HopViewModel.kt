@@ -14,7 +14,9 @@ import dev.meumeu.hop.MachineConfig
 import dev.meumeu.hop.crypto.HopCrypto
 import dev.meumeu.hop.network.AccountClient
 import dev.meumeu.hop.network.AccountSession
+import dev.meumeu.hop.network.AppUpdater
 import dev.meumeu.hop.network.LanPairing
+import dev.meumeu.hop.network.UpdateInfo
 import dev.meumeu.hop.network.PairData
 import dev.meumeu.hop.network.PairSession
 import dev.meumeu.hop.network.PairingClient
@@ -45,7 +47,11 @@ data class HopUiState(
     val accountUsername: String? = null,
     val accountEmail: String? = null,
     val isSyncing: Boolean = false,
-    val syncStatus: String = ""
+    val syncStatus: String = "",
+    // Update state
+    val updateAvailable: Boolean = false,
+    val updateVersion: String? = null,
+    val isUpdating: Boolean = false
 )
 
 class HopViewModel(application: Application) : AndroidViewModel(application) {
@@ -56,12 +62,14 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<HopUiState> = _state
 
     private var accountSession: AccountSession? = null
+    private var latestUpdate: UpdateInfo? = null
 
     init {
         Log.i(TAG, "Hop Android starting")
         loadConfig()
         ensureKeys()
         loadSession()
+        checkForUpdate()
     }
 
     private fun loadConfig() {
@@ -659,6 +667,42 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    // --- Auto-update ---
+
+    private fun checkForUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val currentVersion = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
+            } catch (_: Exception) { "0.0.0" }
+
+            val update = AppUpdater.checkUpdate(currentVersion)
+            if (update != null && update.hasUpdate) {
+                latestUpdate = update
+                _state.value = _state.value.copy(
+                    updateAvailable = true,
+                    updateVersion = update.latestVersion
+                )
+                Log.i(TAG, "Update available: ${update.latestVersion}")
+            }
+        }
+    }
+
+    fun doUpdate() {
+        val update = latestUpdate ?: return
+        val context = getApplication<Application>()
+        _state.value = _state.value.copy(isUpdating = true)
+        Log.i(TAG, "Starting update to ${update.latestVersion}")
+        AppUpdater.downloadAndInstall(context, update)
+    }
+
+    fun getAppVersion(): String {
+        val context = getApplication<Application>()
+        return try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        } catch (_: Exception) { "?" }
     }
 
     // --- Helpers ---

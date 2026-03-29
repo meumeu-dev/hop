@@ -28,25 +28,78 @@ fun AccountScreen(
     email: String?,
     isSyncing: Boolean,
     syncStatus: String,
+    appVersion: String,
+    updateAvailable: Boolean,
+    updateVersion: String?,
+    isUpdating: Boolean,
     onLogin: (email: String, password: String) -> Unit,
     onRegister: (email: String, username: String, password: String) -> Unit,
     onLogout: () -> Unit,
-    onSync: () -> Unit
+    onSync: () -> Unit,
+    onUpdate: () -> Unit
 ) {
-    if (isLoggedIn) {
-        LoggedInView(
-            username = username ?: "",
-            email = email ?: "",
-            isSyncing = isSyncing,
-            syncStatus = syncStatus,
-            onLogout = onLogout,
-            onSync = onSync
-        )
-    } else {
-        LoginRegisterView(
-            onLogin = onLogin,
-            onRegister = onRegister
-        )
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Update banner
+        if (updateAvailable && updateVersion != null) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Mise a jour disponible",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            "v$appVersion → v$updateVersion",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    }
+                    Button(
+                        onClick = onUpdate,
+                        enabled = !isUpdating
+                    ) {
+                        if (isUpdating) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Text("Mettre a jour")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isLoggedIn) {
+            LoggedInView(
+                username = username ?: "",
+                email = email ?: "",
+                isSyncing = isSyncing,
+                syncStatus = syncStatus,
+                appVersion = appVersion,
+                onLogout = onLogout,
+                onSync = onSync
+            )
+        } else {
+            LoginRegisterView(
+                onLogin = onLogin,
+                onRegister = onRegister
+            )
+        }
     }
 }
 
@@ -56,6 +109,7 @@ private fun LoggedInView(
     email: String,
     isSyncing: Boolean,
     syncStatus: String,
+    appVersion: String,
     onLogout: () -> Unit,
     onSync: () -> Unit
 ) {
@@ -154,6 +208,13 @@ private fun LoggedInView(
             Spacer(modifier = Modifier.width(8.dp))
             Text("Deconnexion")
         }
+
+        Spacer(modifier = Modifier.height(32.dp))
+        Text(
+            "Hop v$appVersion",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        )
     }
 }
 
