@@ -74,6 +74,15 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Set version from tag
+        working-directory: mobile
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          CODE=$(echo "$VERSION" | awk -F. '{print $1*10000+$2*100+$3}')
+          sed -i "s/versionCode = [0-9]*/versionCode = $CODE/" app/build.gradle.kts
+          sed -i "s/versionName = \".*\"/versionName = \"$VERSION\"/" app/build.gradle.kts
+          echo "Set version to $VERSION (code $CODE)"
+
       - name: Build APK
         working-directory: mobile
         run: gradle assembleRelease
