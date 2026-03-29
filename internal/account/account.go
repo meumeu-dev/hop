@@ -146,19 +146,19 @@ func (c *Client) Register(email, username, password string) (*Session, error) {
 }
 
 // Login authenticates with 2-step: fetch salt, then auth
-func (c *Client) Login(email, password string) (*Session, error) {
-	// Step 1: fetch salt
-	salt, err := c.fetchSalt(email)
+// The identifier can be an email or username.
+func (c *Client) Login(identifier, password string) (*Session, error) {
+	// Step 1: fetch salt (works with email or username)
+	salt, err := c.fetchSalt(identifier)
 	if err != nil {
 		return nil, err
 	}
 
 	// Step 2: compute hash with server's salt and authenticate
 	authHash := deriveAuthHash(password, salt)
-	dataKey := deriveDataKey(email, password)
 
 	body, _ := json.Marshal(map[string]string{
-		"email":     email,
+		"email":     identifier,
 		"auth_hash": authHash,
 	})
 
@@ -172,6 +172,7 @@ func (c *Client) Login(email, password string) (*Session, error) {
 		OK        bool   `json:"ok"`
 		AccountID string `json:"account_id"`
 		Username  string `json:"username"`
+		Email     string `json:"email"`
 		Token     string `json:"token"`
 		Error     string `json:"error"`
 	}
@@ -183,10 +184,18 @@ func (c *Client) Login(email, password string) (*Session, error) {
 		return nil, fmt.Errorf("%s", result.Error)
 	}
 
+	// Derive data key from the REAL email (not the username input)
+	// This ensures consistency regardless of login method
+	realEmail := result.Email
+	if realEmail == "" {
+		realEmail = identifier // fallback if server doesn't return email
+	}
+	dataKey := deriveDataKey(realEmail, password)
+
 	return &Session{
 		AccountID: result.AccountID,
 		Username:  result.Username,
-		Email:     email,
+		Email:     realEmail,
 		Token:     result.Token,
 		DataKey:   dataKey,
 	}, nil

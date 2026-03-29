@@ -155,17 +155,16 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         )
     }
 
-    /** Login — 2-step: fetch salt then authenticate */
-    fun login(email: String, password: String): AccountSession {
-        // Step 1: fetch salt
-        val salt = fetchSalt(email)
+    /** Login — 2-step: fetch salt then authenticate. Accepts email or username. */
+    fun login(identifier: String, password: String): AccountSession {
+        // Step 1: fetch salt (works with email or username)
+        val salt = fetchSalt(identifier)
 
         // Step 2: compute hash with server's salt
         val authHash = deriveAuthHash(password, salt)
-        val dataKey = deriveDataKey(email, password)
 
         val body = gson.toJson(
-            mapOf("email" to email, "auth_hash" to authHash)
+            mapOf("email" to identifier, "auth_hash" to authHash)
         ).toRequestBody(jsonType)
 
         val request = Request.Builder()
@@ -180,10 +179,14 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
             throw Exception(result["error"] as? String ?: "Erreur inconnue")
         }
 
+        // Use real email from server response for data key derivation (not the username input)
+        val realEmail = result["email"] as? String ?: identifier
+        val dataKey = deriveDataKey(realEmail, password)
+
         return AccountSession(
             accountId = result["account_id"] as String,
             username = result["username"] as String,
-            email = email,
+            email = realEmail,
             token = result["token"] as String,
             dataKey = dataKey
         )
