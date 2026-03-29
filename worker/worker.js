@@ -21,7 +21,8 @@ export default {
 
     // POST /auth/register — create account
     if (path === "/auth/register" && request.method === "POST") {
-      const body = await request.json();
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, corsHeaders); }
       const { email, username, auth_hash } = body;
 
       if (!email || !username || !auth_hash) {
@@ -38,15 +39,24 @@ export default {
         return jsonResponse({ error: "invalid username" }, 400, corsHeaders);
       }
 
-      // Check if email or username already taken
+      // Rate limit: max 5 registrations per IP per 15 min
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      const rlKey = `ratelimit:register:${ip}`;
+      const rlCount = parseInt(await env.HOP_KV.get(rlKey) || "0");
+      if (rlCount >= 5) {
+        return jsonResponse({ error: "trop de tentatives, reessaie plus tard" }, 429, corsHeaders);
+      }
+      await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
+
+      // Check if email or username already taken (generic error to prevent enumeration)
       const existingEmail = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
       if (existingEmail) {
-        return jsonResponse({ error: "email already registered" }, 409, corsHeaders);
+        return jsonResponse({ error: "inscription impossible" }, 409, corsHeaders);
       }
 
       const existingUser = await env.HOP_KV.get(`account:user:${username.toLowerCase()}`);
       if (existingUser) {
-        return jsonResponse({ error: "username already taken" }, 409, corsHeaders);
+        return jsonResponse({ error: "inscription impossible" }, 409, corsHeaders);
       }
 
       // Generate account ID
@@ -88,28 +98,46 @@ export default {
 
     // POST /auth/login — authenticate
     if (path === "/auth/login" && request.method === "POST") {
-      const body = await request.json();
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, corsHeaders); }
       const { email, auth_hash } = body;
 
       if (!email || !auth_hash) {
         return jsonResponse({ error: "missing fields" }, 400, corsHeaders);
       }
 
+      // Rate limit: max 10 login attempts per IP per 15 min
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      const rlKey = `ratelimit:login:${ip}`;
+      const rlCount = parseInt(await env.HOP_KV.get(rlKey) || "0");
+      if (rlCount >= 10) {
+        return jsonResponse({ error: "trop de tentatives, reessaie plus tard" }, 429, corsHeaders);
+      }
+      await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
+
+      // Also rate limit per email: max 5 per 15 min
+      const emailRlKey = `ratelimit:login:${email.toLowerCase()}`;
+      const emailRlCount = parseInt(await env.HOP_KV.get(emailRlKey) || "0");
+      if (emailRlCount >= 5) {
+        return jsonResponse({ error: "trop de tentatives, reessaie plus tard" }, 429, corsHeaders);
+      }
+      await env.HOP_KV.put(emailRlKey, String(emailRlCount + 1), { expirationTtl: 900 });
+
       const accountId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
       if (!accountId) {
-        return jsonResponse({ error: "invalid credentials" }, 401, corsHeaders);
+        return jsonResponse({ error: "identifiants invalides" }, 401, corsHeaders);
       }
 
       const accountData = await env.HOP_KV.get(`account:${accountId}`);
       if (!accountData) {
-        return jsonResponse({ error: "invalid credentials" }, 401, corsHeaders);
+        return jsonResponse({ error: "identifiants invalides" }, 401, corsHeaders);
       }
 
       const account = JSON.parse(accountData);
       const serverHash = await sha256(auth_hash);
 
       if (serverHash !== account.serverHash) {
-        return jsonResponse({ error: "invalid credentials" }, 401, corsHeaders);
+        return jsonResponse({ error: "identifiants invalides" }, 401, corsHeaders);
       }
 
       // Generate session token
@@ -145,13 +173,18 @@ export default {
       const auth = await authenticateRequest(request, env);
       if (!auth) return jsonResponse({ error: "unauthorized" }, 401, corsHeaders);
 
-      const body = await request.json();
-      if (!body.data) {
-        return jsonResponse({ error: "missing data" }, 400, corsHeaders);
+      // Limit body size to 1MB
+      const contentLength = parseInt(request.headers.get("Content-Length") || "0");
+      if (contentLength > 1048576) {
+        return jsonResponse({ error: "payload too large" }, 413, corsHeaders);
       }
 
-      // body.data is an encrypted blob — worker can't read it
-      // Store with no expiration (permanent)
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, corsHeaders); }
+      if (!body.data || typeof body.data !== "string" || body.data.length > 1048576) {
+        return jsonResponse({ error: "invalid data" }, 400, corsHeaders);
+      }
+
       await env.HOP_KV.put(`machines:${auth.accountId}`, JSON.stringify(body.data));
 
       return jsonResponse({ ok: true }, 200, corsHeaders);
@@ -171,7 +204,8 @@ export default {
 
     // POST /pair — le serveur enregistre ses données chiffrées
     if (path === "/pair" && request.method === "POST") {
-      const body = await request.json();
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, corsHeaders); }
       const { data } = body;
 
       if (!data) {

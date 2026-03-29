@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
 sealed class Screen {
     data object Machines : Screen()
     data object Pairing : Screen()
+    data object Account : Screen()
     data class Send(val machineName: String) : Screen()
     data class Receive(val machineName: String) : Screen()
 }
@@ -101,7 +102,7 @@ fun HopApp(
             )
         },
         bottomBar = {
-            if (currentScreen is Screen.Machines || currentScreen is Screen.Pairing) {
+            if (currentScreen is Screen.Machines || currentScreen is Screen.Pairing || currentScreen is Screen.Account) {
                 NavigationBar {
                     NavigationBarItem(
                         icon = { Icon(Icons.Default.DevicesOther, contentDescription = null) },
@@ -119,6 +120,15 @@ fun HopApp(
                         onClick = {
                             selectedTab = 1
                             currentScreen = Screen.Pairing
+                        }
+                    )
+                    NavigationBarItem(
+                        icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
+                        label = { Text("Compte") },
+                        selected = selectedTab == 2,
+                        onClick = {
+                            selectedTab = 2
+                            currentScreen = Screen.Account
                         }
                     )
                 }
@@ -146,6 +156,18 @@ fun HopApp(
                             viewModel.onQRCodeScanned(content)
                         }
                     }
+                )
+
+                is Screen.Account -> AccountScreen(
+                    isLoggedIn = state.isLoggedIn,
+                    username = state.accountUsername,
+                    email = state.accountEmail,
+                    isSyncing = state.isSyncing,
+                    syncStatus = state.syncStatus,
+                    onLogin = { email, password -> viewModel.login(email, password) },
+                    onRegister = { email, username, password -> viewModel.register(email, username, password) },
+                    onLogout = { viewModel.logout() },
+                    onSync = { viewModel.sync() }
                 )
 
                 is Screen.Send -> SendScreen(

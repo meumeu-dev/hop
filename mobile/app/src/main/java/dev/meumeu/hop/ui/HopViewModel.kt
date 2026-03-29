@@ -7,10 +7,13 @@ import android.provider.OpenableColumns
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
 import dev.meumeu.hop.HopConfig
 import dev.meumeu.hop.HopConfigData
 import dev.meumeu.hop.MachineConfig
 import dev.meumeu.hop.crypto.HopCrypto
+import dev.meumeu.hop.network.AccountClient
+import dev.meumeu.hop.network.AccountSession
 import dev.meumeu.hop.network.LanPairing
 import dev.meumeu.hop.network.PairData
 import dev.meumeu.hop.network.PairSession
@@ -36,7 +39,13 @@ data class HopUiState(
     val transferStatus: String = "",
     val isTransferring: Boolean = false,
     val error: String? = null,
-    val message: String? = null
+    val message: String? = null,
+    // Account state
+    val isLoggedIn: Boolean = false,
+    val accountUsername: String? = null,
+    val accountEmail: String? = null,
+    val isSyncing: Boolean = false,
+    val syncStatus: String = ""
 )
 
 class HopViewModel(application: Application) : AndroidViewModel(application) {
@@ -46,10 +55,13 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(HopUiState())
     val state: StateFlow<HopUiState> = _state
 
+    private var accountSession: AccountSession? = null
+
     init {
         Log.i(TAG, "Hop Android starting")
         loadConfig()
         ensureKeys()
+        loadSession()
     }
 
     private fun loadConfig() {
@@ -475,6 +487,178 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         Log.i(TAG, "Removing machine: $name")
         hopConfig.removeMachine(name)
         loadConfig()
+    }
+
+    // --- Account ---
+
+    private fun loadSession() {
+        accountSession = hopConfig.loadSession()
+        accountSession?.let { session ->
+            _state.value = _state.value.copy(
+                isLoggedIn = true,
+                accountUsername = session.username,
+                accountEmail = session.email
+            )
+            Log.i(TAG, "Session restored for ${session.username}")
+        }
+    }
+
+    fun login(email: String, password: String) {
+        Log.i(TAG, "Logging in: $email")
+        _state.value = _state.value.copy(isSyncing = true, syncStatus = "Connexion...")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val workerUrl = hopConfig.load().workerUrl
+                val client = AccountClient(workerUrl)
+                val session = client.login(email, password)
+
+                accountSession = session
+                hopConfig.saveSession(session)
+
+                _state.value = _state.value.copy(
+                    isLoggedIn = true,
+                    accountUsername = session.username,
+                    accountEmail = session.email,
+                    isSyncing = false,
+                    syncStatus = "",
+                    message = "Connecte: ${session.username}"
+                )
+                Log.i(TAG, "Login success: ${session.username}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Login failed", e)
+                _state.value = _state.value.copy(
+                    isSyncing = false,
+                    syncStatus = "",
+                    error = "Connexion echouee: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun register(email: String, username: String, password: String) {
+        Log.i(TAG, "Registering: $email ($username)")
+        _state.value = _state.value.copy(isSyncing = true, syncStatus = "Creation du compte...")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val workerUrl = hopConfig.load().workerUrl
+                val client = AccountClient(workerUrl)
+                val session = client.register(email, username, password)
+
+                accountSession = session
+                hopConfig.saveSession(session)
+
+                _state.value = _state.value.copy(
+                    isLoggedIn = true,
+                    accountUsername = session.username,
+                    accountEmail = session.email,
+                    isSyncing = false,
+                    syncStatus = "",
+                    message = "Compte cree: ${session.username}"
+                )
+                Log.i(TAG, "Register success: ${session.username}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Register failed", e)
+                _state.value = _state.value.copy(
+                    isSyncing = false,
+                    syncStatus = "",
+                    error = "Inscription echouee: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun logout() {
+        Log.i(TAG, "Logging out")
+        val token = accountSession?.token
+
+        viewModelScope.launch(Dispatchers.IO) {
+            if (token != null) {
+                try {
+                    val workerUrl = hopConfig.load().workerUrl
+                    AccountClient(workerUrl).logout(token)
+                } catch (_: Exception) {}
+            }
+        }
+
+        accountSession = null
+        hopConfig.deleteSession()
+        _state.value = _state.value.copy(
+            isLoggedIn = false,
+            accountUsername = null,
+            accountEmail = null,
+            message = "Deconnecte"
+        )
+    }
+
+    fun sync() {
+        val session = accountSession ?: return
+        Log.i(TAG, "Syncing machines...")
+        _state.value = _state.value.copy(isSyncing = true, syncStatus = "Synchronisation...")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val workerUrl = hopConfig.load().workerUrl
+                val client = AccountClient(workerUrl)
+
+                // Push local machines to cloud
+                _state.value = _state.value.copy(syncStatus = "Envoi des machines...")
+                val config = hopConfig.load()
+                val machinesJson = Gson().toJson(config.machines)
+                val encrypted = AccountClient.encryptData(
+                    machinesJson.toByteArray(Charsets.UTF_8),
+                    session.dataKey
+                )
+                client.pushMachines(session.token, encrypted)
+
+                // Pull machines from cloud and merge
+                _state.value = _state.value.copy(syncStatus = "Reception des machines...")
+                val remoteEncrypted = client.pullMachines(session.token)
+
+                if (remoteEncrypted.isNotEmpty()) {
+                    val decrypted = AccountClient.decryptData(remoteEncrypted, session.dataKey)
+                    val type = object : com.google.gson.reflect.TypeToken<Map<String, dev.meumeu.hop.MachineConfig>>() {}.type
+                    val remoteMachines: Map<String, dev.meumeu.hop.MachineConfig> =
+                        Gson().fromJson(String(decrypted, Charsets.UTF_8), type)
+
+                    // Merge: remote machines that are not local get added
+                    val currentConfig = hopConfig.load()
+                    var added = 0
+                    for ((name, machine) in remoteMachines) {
+                        if (!currentConfig.machines.containsKey(name)) {
+                            currentConfig.machines[name] = machine
+                            added++
+                        }
+                    }
+                    if (added > 0) {
+                        hopConfig.save(currentConfig)
+                        loadConfig()
+                    }
+
+                    Log.i(TAG, "Sync complete: ${remoteMachines.size} remote, $added new")
+                    _state.value = _state.value.copy(
+                        isSyncing = false,
+                        syncStatus = "",
+                        message = "Synchronise ($added nouvelles machines)"
+                    )
+                } else {
+                    Log.i(TAG, "Sync complete: no remote data")
+                    _state.value = _state.value.copy(
+                        isSyncing = false,
+                        syncStatus = "",
+                        message = "Machines envoyees au cloud"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Sync failed", e)
+                _state.value = _state.value.copy(
+                    isSyncing = false,
+                    syncStatus = "",
+                    error = "Sync echoue: ${e.message}"
+                )
+            }
+        }
     }
 
     // --- Helpers ---
