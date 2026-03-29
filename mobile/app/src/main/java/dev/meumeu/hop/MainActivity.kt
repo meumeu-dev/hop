@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
                         options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                         options.setPrompt("Scanne le QR code affiche par hop pair")
                         options.setBeepEnabled(false)
-                        options.setOrientationLocked(false)
+                        options.setOrientationLocked(true)
                         qrLauncher.launch(options)
                     }
                 )

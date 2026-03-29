@@ -258,12 +258,13 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val parts = token.split(".", limit = 3)
+                val cleaned = token.trim()
+                val parts = cleaned.split(".", limit = 3)
                 if (parts.size != 3) throw Exception("Token invalide (format: pair_id.code.token)")
 
-                val pairId = parts[0]
-                val code = parts[1]
-                val workerToken = parts[2]
+                val pairId = parts[0].trim()
+                val code = parts[1].trim()
+                val workerToken = parts[2].trim()
 
                 val workerUrl = hopConfig.load().workerUrl
                 val client = PairingClient(workerUrl)
@@ -355,13 +356,16 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- QR code scanned ---
     fun onQRCodeScanned(content: String) {
-        Log.i(TAG, "QR scanned: ${content.take(30)}...")
-        if (content.contains(".") && content.split(".").size == 3) {
-            joinPairing(content)
-        } else if (content.length == 8 && content.all { it.isLetterOrDigit() }) {
-            joinPairingLAN(content)
+        val trimmed = content.trim()
+        Log.i(TAG, "QR scanned: '${trimmed.take(40)}...' (len=${trimmed.length})")
+        if (trimmed.contains(".") && trimmed.split(".").size >= 3) {
+            // Relay token: pair_id.code.token (token part may contain dots)
+            joinPairing(trimmed)
+        } else if (trimmed.length == 8 && trimmed.all { it.isLetterOrDigit() }) {
+            joinPairingLAN(trimmed)
         } else {
-            _state.value = _state.value.copy(error = "QR code invalide")
+            Log.w(TAG, "Invalid QR content: '${trimmed.take(50)}'")
+            _state.value = _state.value.copy(error = "QR code invalide: format non reconnu")
         }
     }
 

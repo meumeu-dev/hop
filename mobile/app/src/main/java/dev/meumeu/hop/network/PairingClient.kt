@@ -64,7 +64,7 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
 
     fun fetchPairData(pairId: String, code: String): PairData {
         val request = Request.Builder()
-            .url("$workerUrl/pair/$pairId")
+            .url("$workerUrl/pair/${pairId.trim()}")
             .get()
             .build()
 
@@ -72,8 +72,10 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
         if (response.code == 404) throw IllegalStateException("Pairing non trouve ou expire")
         require(response.isSuccessful) { "Erreur serveur: HTTP ${response.code}" }
 
-        val result = gson.fromJson(response.body!!.string(), Map::class.java)
-        val encrypted = result["data"] as String
+        val body = response.body?.string() ?: throw IllegalStateException("Reponse vide")
+        val result = gson.fromJson(body, Map::class.java)
+        val encrypted = result["data"] as? String
+            ?: throw IllegalStateException("Donnees de pairing manquantes")
 
         val decrypted = HopCrypto.decrypt(encrypted, code)
         return gson.fromJson(String(decrypted), PairData::class.java)
