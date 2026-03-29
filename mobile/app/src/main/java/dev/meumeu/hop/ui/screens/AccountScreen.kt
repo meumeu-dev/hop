@@ -1,5 +1,8 @@
 package dev.meumeu.hop.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
@@ -12,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -36,36 +40,90 @@ fun AccountScreen(
     onRegister: (email: String, username: String, password: String) -> Unit,
     onLogout: () -> Unit,
     onSync: () -> Unit,
-    onUpdate: () -> Unit
+    onUpdate: () -> Unit,
+    onCheckUpdate: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        // Update banner
-        if (updateAvailable && updateVersion != null) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // --- A propos ---
+        AboutSection(
+            appVersion = appVersion,
+            updateAvailable = updateAvailable,
+            updateVersion = updateVersion,
+            isUpdating = isUpdating,
+            onUpdate = onUpdate,
+            onCheckUpdate = onCheckUpdate
+        )
+
+        // --- Compte ---
+        if (isLoggedIn) {
+            LoggedInSection(
+                username = username ?: "",
+                email = email ?: "",
+                isSyncing = isSyncing,
+                syncStatus = syncStatus,
+                onLogout = onLogout,
+                onSync = onSync
+            )
+        } else {
+            LoginSection(
+                onLogin = onLogin,
+                onRegister = onRegister
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutSection(
+    appVersion: String,
+    updateAvailable: Boolean,
+    updateVersion: String?,
+    isUpdating: Boolean,
+    onUpdate: () -> Unit,
+    onCheckUpdate: () -> Unit
+) {
+    val context = LocalContext.current
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
                 )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "A propos",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // Version
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            "Mise a jour disponible",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            "v$appVersion → v$updateVersion",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                        )
-                    }
+                Column {
+                    Text("Hop", fontWeight = FontWeight.Medium)
+                    Text(
+                        "v$appVersion",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (updateAvailable && updateVersion != null) {
                     Button(
                         onClick = onUpdate,
                         enabled = !isUpdating
@@ -76,150 +134,123 @@ fun AccountScreen(
                                 strokeWidth = 2.dp,
                                 color = MaterialTheme.colorScheme.onPrimary
                             )
+                            Spacer(Modifier.width(8.dp))
+                            Text("Telechargement...")
                         } else {
-                            Text("Mettre a jour")
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("v$updateVersion")
                         }
+                    }
+                } else {
+                    OutlinedButton(onClick = onCheckUpdate) {
+                        Text("Verifier")
                     }
                 }
             }
-        }
 
-        if (isLoggedIn) {
-            LoggedInView(
-                username = username ?: "",
-                email = email ?: "",
-                isSyncing = isSyncing,
-                syncStatus = syncStatus,
-                appVersion = appVersion,
-                onLogout = onLogout,
-                onSync = onSync
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(12.dp))
+
+            // Credits
+            Text("Developpe par", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "meumeu.dev",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://meumeu.dev")))
+                }
             )
-        } else {
-            LoginRegisterView(
-                onLogin = onLogin,
-                onRegister = onRegister
+
+            Spacer(Modifier.height(8.dp))
+
+            Text("Code source", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "github.com/meumeu-dev/hop",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/meumeu-dev/hop")))
+                }
             )
         }
     }
 }
 
 @Composable
-private fun LoggedInView(
+private fun LoggedInSection(
     username: String,
     email: String,
     isSyncing: Boolean,
     syncStatus: String,
-    appVersion: String,
     onLogout: () -> Unit,
     onSync: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Icon(
-            Icons.Default.AccountCircle,
-            contentDescription = null,
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = username,
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            text = email,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Sync section
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(12.dp))
                 Text(
-                    text = "Synchronisation",
+                    "Compte",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
+            }
 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(Modifier.height(16.dp))
 
-                Text(
-                    text = "Synchronise les machines entre tous vos appareils",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Text(username, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+            Text(email, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(16.dp))
 
+            Button(
+                onClick = onSync,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSyncing
+            ) {
                 if (isSyncing) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                    if (syncStatus.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = syncStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(syncStatus.ifEmpty { "Synchronisation..." })
                 } else {
-                    Button(
-                        onClick = onSync,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Sync, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Synchroniser")
-                    }
+                    Icon(Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Synchroniser les machines")
                 }
             }
+
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedButton(
+                onClick = onLogout,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("Deconnexion")
+            }
         }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        OutlinedButton(
-            onClick = onLogout,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.error
-            )
-        ) {
-            Icon(Icons.Default.Logout, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Deconnexion")
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-        Text(
-            "Hop v$appVersion",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
     }
 }
 
 @Composable
-private fun LoginRegisterView(
+private fun LoginSection(
     onLogin: (email: String, password: String) -> Unit,
     onRegister: (email: String, username: String, password: String) -> Unit
 ) {
@@ -228,141 +259,123 @@ private fun LoginRegisterView(
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var isLoading by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp)
-            .verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(modifier = Modifier.height(32.dp))
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.AccountCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    if (isRegisterMode) "Creer un compte" else "Connexion",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-        Icon(
-            Icons.Default.Cloud,
-            contentDescription = null,
-            modifier = Modifier.size(64.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Synchronisez vos machines entre appareils",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Text(
-            text = if (isRegisterMode) "Creer un compte" else "Connexion",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        Text(
-            text = "Synchronisez vos machines entre appareils",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text(if (isRegisterMode) "Email" else "Email ou username") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Next
-            ),
-            keyboardActions = KeyboardActions(
-                onNext = { focusManager.moveFocus(FocusDirection.Down) }
-            ),
-            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) }
-        )
-
-        if (isRegisterMode) {
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(16.dp))
 
             OutlinedTextField(
-                value = username,
-                onValueChange = { username = it },
-                label = { Text("Nom d'utilisateur") },
+                value = email,
+                onValueChange = { email = it },
+                label = { Text(if (isRegisterMode) "Email" else "Email ou username") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = if (isRegisterMode) KeyboardType.Email else KeyboardType.Text,
+                    imeAction = ImeAction.Next
+                ),
                 keyboardActions = KeyboardActions(
                     onNext = { focusManager.moveFocus(FocusDirection.Down) }
                 ),
-                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) }
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) }
             )
-        }
 
-        Spacer(modifier = Modifier.height(12.dp))
+            if (isRegisterMode) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    label = { Text("Nom d'utilisateur") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    keyboardActions = KeyboardActions(
+                        onNext = { focusManager.moveFocus(FocusDirection.Down) }
+                    ),
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) }
+                )
+            }
 
-        OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Mot de passe") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            visualTransformation = if (passwordVisible) VisualTransformation.None
-                else PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done
-            ),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    focusManager.clearFocus()
-                    if (email.isNotBlank() && password.isNotBlank()) {
-                        if (isRegisterMode && username.isNotBlank()) {
-                            onRegister(email, username, password)
-                        } else if (!isRegisterMode) {
-                            onLogin(email, password)
-                        }
+            Spacer(Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Mot de passe") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Password,
+                    imeAction = ImeAction.Done
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = {
+                        focusManager.clearFocus()
+                        if (isRegisterMode) onRegister(email, username, password)
+                        else onLogin(email, password)
+                    }
+                ),
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = null
+                        )
                     }
                 }
-            ),
-            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-            trailingIcon = {
-                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                    Icon(
-                        if (passwordVisible) Icons.Default.VisibilityOff
-                        else Icons.Default.Visibility,
-                        contentDescription = if (passwordVisible) "Masquer" else "Afficher"
-                    )
-                }
-            }
-        )
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(
-            onClick = {
-                if (isRegisterMode) {
-                    onRegister(email, username, password)
-                } else {
-                    onLogin(email, password)
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = email.isNotBlank() && password.isNotBlank() &&
-                    (!isRegisterMode || username.isNotBlank())
-        ) {
-            Text(if (isRegisterMode) "Creer le compte" else "Se connecter")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        TextButton(
-            onClick = {
-                isRegisterMode = !isRegisterMode
-            }
-        ) {
-            Text(
-                if (isRegisterMode) "Deja un compte ? Se connecter"
-                else "Pas de compte ? En creer un"
             )
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = {
+                    if (isRegisterMode) onRegister(email, username, password)
+                    else onLogin(email, password)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = email.isNotBlank() && password.isNotBlank() &&
+                    (!isRegisterMode || username.isNotBlank())
+            ) {
+                Text(if (isRegisterMode) "Creer le compte" else "Se connecter")
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            TextButton(
+                onClick = { isRegisterMode = !isRegisterMode },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    if (isRegisterMode) "Deja un compte ? Se connecter"
+                    else "Pas de compte ? S'inscrire"
+                )
+            }
         }
     }
 }

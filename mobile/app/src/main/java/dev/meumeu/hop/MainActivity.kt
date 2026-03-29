@@ -188,7 +188,8 @@ fun HopApp(
                     onRegister = { email, username, password -> viewModel.register(email, username, password) },
                     onLogout = { viewModel.logout() },
                     onSync = { viewModel.sync() },
-                    onUpdate = { viewModel.doUpdate() }
+                    onUpdate = { viewModel.doUpdate() },
+                    onCheckUpdate = { viewModel.forceCheckUpdate() }
                 )
 
                 is Screen.Send -> SendScreen(

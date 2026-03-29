@@ -789,7 +789,50 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         val context = getApplication<Application>()
         _state.value = _state.value.copy(isUpdating = true)
         Log.i(TAG, "Starting update to ${update.latestVersion}")
-        AppUpdater.downloadAndInstall(context, update)
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val apkFile = AppUpdater.downloadApk(context, update) { progress ->
+                    Log.d(TAG, "Download progress: $progress%")
+                }
+                // Switch to main thread for install intent
+                launch(Dispatchers.Main) {
+                    AppUpdater.installApk(context, apkFile)
+                    _state.value = _state.value.copy(isUpdating = false)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Update failed", e)
+                _state.value = _state.value.copy(
+                    isUpdating = false,
+                    error = "Mise a jour echouee: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun forceCheckUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            val currentVersion = try {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "0.0.0"
+            } catch (_: Exception) { "0.0.0" }
+
+            val update = AppUpdater.checkUpdate(currentVersion)
+            if (update != null && update.hasUpdate) {
+                latestUpdate = update
+                _state.value = _state.value.copy(
+                    updateAvailable = true,
+                    updateVersion = update.latestVersion,
+                    message = "Mise a jour disponible: v${update.latestVersion}"
+                )
+            } else {
+                _state.value = _state.value.copy(
+                    updateAvailable = false,
+                    updateVersion = null,
+                    message = "Deja a jour (v$currentVersion)"
+                )
+            }
+        }
     }
 
     fun getAppVersion(): String {
