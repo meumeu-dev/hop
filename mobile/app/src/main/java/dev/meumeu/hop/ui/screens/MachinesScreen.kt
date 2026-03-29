@@ -14,18 +14,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.meumeu.hop.MachineConfig
+import dev.meumeu.hop.ui.MachineStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MachinesScreen(
     machines: Map<String, MachineConfig>,
-    machineVersions: Map<String, String>,
-    isCheckingVersions: Boolean,
+    machineStatuses: Map<String, MachineStatus>,
+    isCheckingMachines: Boolean,
     appVersion: String,
     onSendTo: (String) -> Unit,
     onReceiveFrom: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onRefreshVersions: () -> Unit
+    onRefresh: () -> Unit
 ) {
     if (machines.isEmpty()) {
         Box(
@@ -54,35 +55,43 @@ fun MachinesScreen(
         }
     } else {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Refresh bar
+            // Status bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isCheckingVersions) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp),
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(Modifier.width(8.dp))
+                if (isCheckingMachines) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "Scan en cours...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    // Summary
+                    val online = machineStatuses.count { it.value.connectedVia != "offline" }
+                    val total = machines.size
                     Text(
-                        "Verification...",
+                        "$online/$total en ligne",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (online == total) Color(0xFF2E7D32)
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Spacer(Modifier.weight(1f))
                 IconButton(
-                    onClick = onRefreshVersions,
-                    enabled = !isCheckingVersions
+                    onClick = onRefresh,
+                    enabled = !isCheckingMachines
                 ) {
-                    Icon(
-                        Icons.Default.Refresh,
-                        contentDescription = "Rafraichir les versions"
-                    )
+                    Icon(Icons.Default.Refresh, contentDescription = "Rafraichir")
                 }
             }
 
@@ -95,7 +104,7 @@ fun MachinesScreen(
                     MachineCard(
                         name = name,
                         machine = machine,
-                        version = machineVersions[name],
+                        status = machineStatuses[name],
                         appVersion = appVersion,
                         onSend = { onSendTo(name) },
                         onReceive = { onReceiveFrom(name) },
@@ -111,7 +120,7 @@ fun MachinesScreen(
 fun MachineCard(
     name: String,
     machine: MachineConfig,
-    version: String?,
+    status: MachineStatus?,
     appVersion: String,
     onSend: () -> Unit,
     onReceive: () -> Unit,
@@ -134,24 +143,38 @@ fun MachineCard(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Status dot
+                        StatusDot(status)
                         Text(
                             name,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        VersionBadge(version = version, appVersion = appVersion)
+                        // Version badge
+                        if (status != null && status.version != "?") {
+                            VersionBadge(version = status.version, appVersion = appVersion)
+                        }
                     }
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         "${machine.user}@${machine.ip}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    if (machine.tunnel != null) {
-                        Text(
-                            "Tunnel: ${machine.tunnel}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
+                    // Connection mode chips
+                    if (status != null && status.connectedVia != "offline") {
+                        Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (status.lanReachable) {
+                                ConnectionChip("LAN", Color(0xFF2E7D32))
+                            }
+                            if (status.tunnelReachable) {
+                                ConnectionChip("Tunnel", Color(0xFF1565C0))
+                            }
+                        }
+                    } else if (status?.connectedVia == "offline") {
+                        Spacer(Modifier.height(4.dp))
+                        ConnectionChip("Hors ligne", MaterialTheme.colorScheme.error)
                     }
                 }
 
@@ -168,7 +191,8 @@ fun MachineCard(
             ) {
                 Button(
                     onClick = onSend,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    enabled = status?.connectedVia != "offline"
                 ) {
                     Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
@@ -177,7 +201,8 @@ fun MachineCard(
 
                 OutlinedButton(
                     onClick = onReceive,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    enabled = status?.connectedVia != "offline"
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
@@ -201,52 +226,60 @@ fun MachineCard(
 }
 
 @Composable
-private fun VersionBadge(version: String?, appVersion: String) {
-    if (version == null) return
-
-    val (label, backgroundColor, textColor) = when {
-        version == "offline" -> Triple(
-            "offline",
-            MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
-            MaterialTheme.colorScheme.error
-        )
-        version == "?" || version == "not installed" -> Triple(
-            if (version == "not installed") "no hop" else "?",
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
-            MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        isOlderVersion(version, appVersion) -> Triple(
-            "v$version",
-            Color(0xFFFFF3E0), // light orange
-            Color(0xFFE65100)  // dark orange
-        )
-        else -> Triple(
-            "v$version",
-            Color(0xFFE8F5E9), // light green
-            Color(0xFF2E7D32)  // dark green
-        )
+private fun StatusDot(status: MachineStatus?) {
+    val color = when {
+        status == null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+        status.connectedVia == "offline" -> MaterialTheme.colorScheme.error
+        status.connectedVia == "lan+tunnel" -> Color(0xFF2E7D32)
+        status.connectedVia == "lan" -> Color(0xFF4CAF50)
+        status.connectedVia == "tunnel" -> Color(0xFF2196F3)
+        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
     }
+    Surface(
+        modifier = Modifier.size(10.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = color
+    ) {}
+}
 
+@Composable
+private fun ConnectionChip(label: String, color: Color) {
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = backgroundColor
+        color = color.copy(alpha = 0.12f)
     ) {
         Text(
             text = label,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            color = color,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun VersionBadge(version: String, appVersion: String) {
+    val isOld = isOlderVersion(version, appVersion)
+    val bgColor = if (isOld) Color(0xFFFFF3E0) else Color(0xFFE8F5E9)
+    val txtColor = if (isOld) Color(0xFFE65100) else Color(0xFF2E7D32)
+
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = bgColor
+    ) {
+        Text(
+            text = "v$version",
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.Medium,
                 fontSize = 10.sp
             ),
-            color = textColor
+            color = txtColor
         )
     }
 }
 
-/**
- * Compare two semver strings. Returns true if [remote] is strictly older than [local].
- * Non-parseable versions return false (not considered older).
- */
 private fun isOlderVersion(remote: String, local: String): Boolean {
     val remoteParts = remote.split("-")[0].split(".").mapNotNull { it.toIntOrNull() }
     val localParts = local.split("-")[0].split(".").mapNotNull { it.toIntOrNull() }

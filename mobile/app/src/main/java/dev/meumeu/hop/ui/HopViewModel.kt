@@ -54,9 +54,16 @@ data class HopUiState(
     val updateAvailable: Boolean = false,
     val updateVersion: String? = null,
     val isUpdating: Boolean = false,
-    // Machine version state
-    val machineVersions: Map<String, String> = emptyMap(),
-    val isCheckingVersions: Boolean = false
+    // Machine status
+    val machineStatuses: Map<String, MachineStatus> = emptyMap(),
+    val isCheckingMachines: Boolean = false
+)
+
+data class MachineStatus(
+    val lanReachable: Boolean = false,
+    val tunnelReachable: Boolean = false,
+    val version: String = "?",
+    val connectedVia: String = "offline" // "lan", "tunnel", "lan+tunnel", "offline"
 )
 
 class HopViewModel(application: Application) : AndroidViewModel(application) {
@@ -76,7 +83,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         ensureKeys()
         loadSession()
         checkForUpdate()
-        checkMachineVersions()
+        checkMachineStatuses()
     }
 
     private fun loadConfig() {
@@ -504,43 +511,84 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         loadConfig()
     }
 
-    // --- Machine version checking ---
+    // --- Machine status checking (LAN/tunnel/version) ---
 
-    private fun checkMachineVersions() {
+    private fun checkMachineStatuses() {
         val config = hopConfig.load()
         if (config.machines.isEmpty()) return
 
-        _state.value = _state.value.copy(isCheckingVersions = true)
+        _state.value = _state.value.copy(isCheckingMachines = true)
 
         viewModelScope.launch(Dispatchers.IO) {
             val results = config.machines.map { (name, machine) ->
                 async {
-                    val version = try {
-                        val host = findReachableHost(machine)
-                        sshManager.getRemoteHopVersion(
-                            host = host,
-                            port = 22,
-                            user = machine.user,
-                            privateKeyFile = hopConfig.privateKeyFile
-                        ).getOrDefault("?")
-                    } catch (e: Exception) {
-                        Log.d(TAG, "Version check failed for $name: ${e.message}")
-                        "offline"
+                    var lanReachable = false
+                    var tunnelReachable = false
+                    var version = "?"
+                    var connectedHost: String? = null
+
+                    // Check LAN IPs
+                    val ipsToTry = (machine.ips ?: listOf(machine.ip)).filter { it.isNotBlank() }
+                    for (ip in ipsToTry) {
+                        try {
+                            if (InetAddress.getByName(ip).isReachable(2000)) {
+                                lanReachable = true
+                                connectedHost = ip
+                                break
+                            }
+                        } catch (_: Exception) {}
                     }
-                    name to version
+
+                    // Check tunnel
+                    if (machine.tunnel != null) {
+                        try {
+                            val addr = InetAddress.getByName(machine.tunnel)
+                            if (addr != null) tunnelReachable = true
+                        } catch (_: Exception) {}
+                    }
+
+                    // Get version via SSH (use LAN if available, tunnel otherwise)
+                    val sshHost = connectedHost ?: machine.tunnel
+                    if (sshHost != null && (lanReachable || tunnelReachable)) {
+                        try {
+                            version = sshManager.getRemoteHopVersion(
+                                host = sshHost,
+                                port = 22,
+                                user = machine.user,
+                                privateKeyFile = hopConfig.privateKeyFile
+                            ).getOrDefault("?")
+                        } catch (e: Exception) {
+                            Log.d(TAG, "Version check failed for $name: ${e.message}")
+                        }
+                    }
+
+                    val connectedVia = when {
+                        lanReachable && tunnelReachable -> "lan+tunnel"
+                        lanReachable -> "lan"
+                        tunnelReachable -> "tunnel"
+                        else -> "offline"
+                    }
+
+                    Log.d(TAG, "$name: $connectedVia (v$version)")
+                    name to MachineStatus(
+                        lanReachable = lanReachable,
+                        tunnelReachable = tunnelReachable,
+                        version = version,
+                        connectedVia = connectedVia
+                    )
                 }
             }.awaitAll().toMap()
 
-            Log.i(TAG, "Machine versions: $results")
+            Log.i(TAG, "Machine statuses: ${results.map { "${it.key}=${it.value.connectedVia}" }}")
             _state.value = _state.value.copy(
-                machineVersions = results,
-                isCheckingVersions = false
+                machineStatuses = results,
+                isCheckingMachines = false
             )
         }
     }
 
-    fun refreshVersions() {
-        checkMachineVersions()
+    fun refreshStatuses() {
+        checkMachineStatuses()
     }
 
     // --- Account ---

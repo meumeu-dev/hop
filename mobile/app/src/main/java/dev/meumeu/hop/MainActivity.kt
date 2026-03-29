@@ -151,13 +151,13 @@ fun HopApp(
             when (val screen = currentScreen) {
                 is Screen.Machines -> MachinesScreen(
                     machines = state.config.machines,
-                    machineVersions = state.machineVersions,
-                    isCheckingVersions = state.isCheckingVersions,
+                    machineStatuses = state.machineStatuses,
+                    isCheckingMachines = state.isCheckingMachines,
                     appVersion = viewModel.getAppVersion(),
                     onSendTo = { currentScreen = Screen.Send(it) },
                     onReceiveFrom = { currentScreen = Screen.Receive(it) },
                     onRemove = { viewModel.removeMachine(it) },
-                    onRefreshVersions = { viewModel.refreshVersions() }
+                    onRefresh = { viewModel.refreshStatuses() }
                 )
 
                 is Screen.Pairing -> PairingScreen(
