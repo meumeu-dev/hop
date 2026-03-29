@@ -77,13 +77,20 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
     private var latestUpdate: UpdateInfo? = null
 
     init {
-        Log.i(TAG, "Hop Android starting")
-        clearTokenFile() // Clean stale pairing token from previous crash
-        loadConfig()
-        ensureKeys()
-        loadSession()
-        checkForUpdate()
-        checkMachineStatuses()
+        try {
+            Log.i(TAG, "Hop Android starting")
+            loadConfig()
+            ensureKeys()
+            loadSession()
+            // Delay non-critical operations
+            viewModelScope.launch(Dispatchers.IO) {
+                try { clearTokenFile() } catch (_: Exception) {}
+            }
+            checkForUpdate()
+            checkMachineStatuses()
+        } catch (e: Exception) {
+            Log.e(TAG, "Init failed", e)
+        }
     }
 
     private fun loadConfig() {
