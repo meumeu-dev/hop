@@ -23,15 +23,15 @@ type Config struct {
 }
 
 type Machine struct {
-	IP       string                    `yaml:"ip"`
-	User     string                    `yaml:"user"`
-	Tunnel   string                    `yaml:"tunnel,omitempty"`
-	Services map[string]MachineService `yaml:"services,omitempty"`
+	IP       string                    `yaml:"ip" json:"ip"`
+	User     string                    `yaml:"user" json:"user"`
+	Tunnel   string                    `yaml:"tunnel,omitempty" json:"tunnel,omitempty"`
+	Services map[string]MachineService `yaml:"services,omitempty" json:"services,omitempty"`
 }
 
 type MachineService struct {
-	ID  string `yaml:"id,omitempty"`
-	Cmd string `yaml:"cmd,omitempty"`
+	ID  string `yaml:"id,omitempty" json:"id,omitempty"`
+	Cmd string `yaml:"cmd,omitempty" json:"cmd,omitempty"`
 }
 
 type Service struct {
