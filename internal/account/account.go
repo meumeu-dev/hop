@@ -4,7 +4,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -47,31 +46,71 @@ func GetWorkerURL() string {
 	return pairing.GetWorkerURL()
 }
 
-// deriveAuthHash creates a hash for authentication (sent to server)
-// Uses Argon2id with "auth" salt — the server hashes this again with SHA256
-func deriveAuthHash(email, password string) string {
-	salt := []byte("hop-auth:" + strings.ToLower(email))
-	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 1, 32)
+// deriveAuthHash creates a hash for authentication using the server-provided random salt
+// Argon2id: 3 iterations, 64MB, 4 threads, 32 byte output
+func deriveAuthHash(password string, saltHex string) string {
+	salt, _ := hex.DecodeString(saltHex)
+	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
 	return hex.EncodeToString(key)
 }
 
 // deriveDataKey creates a key for encrypting data (never sent to server)
-// Uses Argon2id with "data" salt — completely separate from auth hash
+// Uses a deterministic salt based on email — this is acceptable because
+// this key never leaves the client and is not used for authentication
 func deriveDataKey(email, password string) string {
 	salt := []byte("hop-data:" + strings.ToLower(email))
-	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 1, 32)
+	key := argon2.IDKey([]byte(password), salt, 3, 64*1024, 4, 32)
 	return hex.EncodeToString(key)
+}
+
+// fetchSalt gets the random salt for an email from the server (step 1 of login)
+func (c *Client) fetchSalt(email string) (string, error) {
+	resp, err := c.httpClient.Get(c.workerURL + "/auth/salt?email=" + email)
+	if err != nil {
+		return "", fmt.Errorf("connexion: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Salt  string `json:"salt"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return "", err
+	}
+	if result.Salt == "" {
+		return "", fmt.Errorf("salt introuvable")
+	}
+	return result.Salt, nil
 }
 
 // Register creates a new account
 func (c *Client) Register(email, username, password string) (*Session, error) {
-	authHash := deriveAuthHash(email, password)
+	// For registration, we need to first register to get the salt back,
+	// but the server generates the salt. So we do a 2-step:
+	// 1. Send a preliminary hash with a temporary salt
+	// 2. Server stores the random salt and the server-hash of our auth_hash
+	// The client's auth_hash for register uses a temp salt that the server will replace.
+	// Actually — simpler: register sends the hash, server stores it + its random salt.
+	// On next login, client fetches the salt, recomputes the hash.
+	// Problem: register and login must use the same salt!
+	// Solution: client generates a random salt, sends it with registration.
+
+	// Generate random salt client-side for this account
+	saltBytes := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, saltBytes); err != nil {
+		return nil, err
+	}
+	authSalt := hex.EncodeToString(saltBytes)
+
+	authHash := deriveAuthHash(password, authSalt)
 	dataKey := deriveDataKey(email, password)
 
 	body, _ := json.Marshal(map[string]string{
 		"email":     email,
 		"username":  username,
 		"auth_hash": authHash,
+		"auth_salt": authSalt,
 	})
 
 	resp, err := c.httpClient.Post(c.workerURL+"/auth/register", "application/json", strings.NewReader(string(body)))
@@ -104,9 +143,16 @@ func (c *Client) Register(email, username, password string) (*Session, error) {
 	}, nil
 }
 
-// Login authenticates an existing account
+// Login authenticates with 2-step: fetch salt, then auth
 func (c *Client) Login(email, password string) (*Session, error) {
-	authHash := deriveAuthHash(email, password)
+	// Step 1: fetch salt
+	salt, err := c.fetchSalt(email)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: compute hash with server's salt and authenticate
+	authHash := deriveAuthHash(password, salt)
 	dataKey := deriveDataKey(email, password)
 
 	body, _ := json.Marshal(map[string]string{
@@ -259,10 +305,36 @@ func DecryptData(encoded string, hexKey string) ([]byte, error) {
 	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
-// Session storage
+// Session storage — encrypted with random salt on disk
 
 func sessionPath() string {
-	return filepath.Join(config.HopDir(), "session.json")
+	return filepath.Join(config.HopDir(), "session.enc")
+}
+
+func sessionSaltPath() string {
+	return filepath.Join(config.HopDir(), "session.salt")
+}
+
+// deriveSessionKey creates a key from a random salt stored alongside the session file
+// The salt makes the key non-predictable even if someone knows the hop directory
+func deriveSessionKey() ([]byte, error) {
+	saltPath := sessionSaltPath()
+	salt, err := os.ReadFile(saltPath)
+	if err != nil {
+		// Generate new random salt
+		salt = make([]byte, 32)
+		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(saltPath, salt, 0600); err != nil {
+			return nil, err
+		}
+	}
+
+	// Derive key from salt + a machine-specific element (hop dir path)
+	material := append(salt, []byte(config.HopDir())...)
+	key := argon2.IDKey(material, []byte("hop-session-local"), 1, 16*1024, 1, 32)
+	return key, nil
 }
 
 func SaveSession(s *Session) error {
@@ -270,9 +342,13 @@ func SaveSession(s *Session) error {
 	if err != nil {
 		return err
 	}
-	// Encrypt session file with a machine-specific key (SHA256 of hop dir path)
-	h := sha256.Sum256([]byte(config.HopDir() + "hop-session-key"))
-	encrypted, err := EncryptData(data, hex.EncodeToString(h[:]))
+
+	key, err := deriveSessionKey()
+	if err != nil {
+		return err
+	}
+
+	encrypted, err := EncryptData(data, hex.EncodeToString(key))
 	if err != nil {
 		return err
 	}
@@ -285,8 +361,12 @@ func LoadSession() (*Session, error) {
 		return nil, err
 	}
 
-	h := sha256.Sum256([]byte(config.HopDir() + "hop-session-key"))
-	decrypted, err := DecryptData(string(data), hex.EncodeToString(h[:]))
+	key, err := deriveSessionKey()
+	if err != nil {
+		return nil, err
+	}
+
+	decrypted, err := DecryptData(string(data), hex.EncodeToString(key))
 	if err != nil {
 		return nil, err
 	}
@@ -300,4 +380,5 @@ func LoadSession() (*Session, error) {
 
 func DeleteSession() {
 	os.Remove(sessionPath())
+	os.Remove(sessionSaltPath())
 }

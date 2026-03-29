@@ -38,19 +38,13 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         private const val GCM_TAG_BITS = 128
         private const val KEY_SIZE = 32
 
-        /**
-         * Derive auth hash: Argon2id with salt "hop-auth:<email>", 3 iter, 64MB, 1 thread, 32 bytes.
-         * Result is hex-encoded and sent to server for authentication.
-         */
-        fun deriveAuthHash(email: String, password: String): String {
-            val salt = "hop-auth:${email.lowercase()}".toByteArray(Charsets.UTF_8)
+        /** Derive auth hash with server-provided random salt (hex). Argon2id 3 iter, 64MB, 4 threads. */
+        fun deriveAuthHash(password: String, saltHex: String): String {
+            val salt = hexDecode(saltHex)
             return hexEncode(argon2id(password.toByteArray(Charsets.UTF_8), salt))
         }
 
-        /**
-         * Derive data key: Argon2id with salt "hop-data:<email>", 3 iter, 64MB, 1 thread, 32 bytes.
-         * Result is hex-encoded. Never sent to server — used to encrypt machine data client-side.
-         */
+        /** Derive data key with deterministic email-based salt. Never sent to server. */
         fun deriveDataKey(email: String, password: String): String {
             val salt = "hop-data:${email.lowercase()}".toByteArray(Charsets.UTF_8)
             return hexEncode(argon2id(password.toByteArray(Charsets.UTF_8), salt))
@@ -61,7 +55,7 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
                 .withSalt(salt)
                 .withIterations(3)
                 .withMemoryAsKB(64 * 1024)
-                .withParallelism(1)
+                .withParallelism(4)
                 .build()
 
             val gen = Argon2BytesGenerator()
@@ -72,32 +66,18 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
             return key
         }
 
-        /**
-         * Encrypt data with AES-256-GCM. Output: base64(nonce || ciphertext+tag).
-         * Matches Go's EncryptData: gcm.Seal(nonce, nonce, data, nil) then base64.
-         */
         fun encryptData(data: ByteArray, hexKey: String): String {
             val key = hexDecode(hexKey)
             val nonce = ByteArray(GCM_NONCE_SIZE)
             SecureRandom().nextBytes(nonce)
 
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.ENCRYPT_MODE,
-                SecretKeySpec(key, "AES"),
-                GCMParameterSpec(GCM_TAG_BITS, nonce)
-            )
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
             val ciphertext = cipher.doFinal(data)
 
-            // Go format: nonce || ciphertext+tag (Java GCM appends tag to ciphertext already)
-            val result = nonce + ciphertext
-            return Base64.getEncoder().encodeToString(result)
+            return Base64.getEncoder().encodeToString(nonce + ciphertext)
         }
 
-        /**
-         * Decrypt data with AES-256-GCM. Input: base64(nonce || ciphertext+tag).
-         * Matches Go's DecryptData.
-         */
         fun decryptData(encoded: String, hexKey: String): ByteArray {
             val key = hexDecode(hexKey)
             val raw = Base64.getDecoder().decode(encoded)
@@ -107,18 +87,14 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
             val ciphertext = raw.sliceArray(GCM_NONCE_SIZE until raw.size)
 
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                SecretKeySpec(key, "AES"),
-                GCMParameterSpec(GCM_TAG_BITS, nonce)
-            )
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
             return cipher.doFinal(ciphertext)
         }
 
-        private fun hexEncode(bytes: ByteArray): String =
+        fun hexEncode(bytes: ByteArray): String =
             bytes.joinToString("") { "%02x".format(it) }
 
-        private fun hexDecode(hex: String): ByteArray {
+        fun hexDecode(hex: String): ByteArray {
             require(hex.length % 2 == 0) { "invalid hex string" }
             return ByteArray(hex.length / 2) { i ->
                 hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
@@ -126,18 +102,34 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         }
     }
 
-    /**
-     * Register a new account. Returns session with data key derived client-side.
-     */
+    /** Fetch the random salt for an email (step 1 of login) */
+    private fun fetchSalt(email: String): String {
+        val request = Request.Builder()
+            .url("$workerUrl/auth/salt?email=$email")
+            .get()
+            .build()
+
+        val response = client.newCall(request).execute()
+        val result = gson.fromJson(response.body!!.string(), Map::class.java)
+        return result["salt"] as? String ?: throw Exception("Salt introuvable")
+    }
+
+    /** Register — client generates random salt, sends it with auth_hash */
     fun register(email: String, username: String, password: String): AccountSession {
-        val authHash = deriveAuthHash(email, password)
+        // Generate random salt
+        val saltBytes = ByteArray(16)
+        SecureRandom().nextBytes(saltBytes)
+        val authSalt = hexEncode(saltBytes)
+
+        val authHash = deriveAuthHash(password, authSalt)
         val dataKey = deriveDataKey(email, password)
 
         val body = gson.toJson(
             mapOf(
                 "email" to email,
                 "username" to username,
-                "auth_hash" to authHash
+                "auth_hash" to authHash,
+                "auth_salt" to authSalt
             )
         ).toRequestBody(jsonType)
 
@@ -149,8 +141,7 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         val response = client.newCall(request).execute()
         val result = gson.fromJson(response.body!!.string(), Map::class.java)
 
-        val ok = result["ok"] as? Boolean ?: false
-        if (!ok) {
+        if (result["ok"] as? Boolean != true) {
             throw Exception(result["error"] as? String ?: "Erreur inconnue")
         }
 
@@ -163,18 +154,17 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         )
     }
 
-    /**
-     * Login to an existing account. Returns session with data key derived client-side.
-     */
+    /** Login — 2-step: fetch salt then authenticate */
     fun login(email: String, password: String): AccountSession {
-        val authHash = deriveAuthHash(email, password)
+        // Step 1: fetch salt
+        val salt = fetchSalt(email)
+
+        // Step 2: compute hash with server's salt
+        val authHash = deriveAuthHash(password, salt)
         val dataKey = deriveDataKey(email, password)
 
         val body = gson.toJson(
-            mapOf(
-                "email" to email,
-                "auth_hash" to authHash
-            )
+            mapOf("email" to email, "auth_hash" to authHash)
         ).toRequestBody(jsonType)
 
         val request = Request.Builder()
@@ -185,8 +175,7 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         val response = client.newCall(request).execute()
         val result = gson.fromJson(response.body!!.string(), Map::class.java)
 
-        val ok = result["ok"] as? Boolean ?: false
-        if (!ok) {
+        if (result["ok"] as? Boolean != true) {
             throw Exception(result["error"] as? String ?: "Erreur inconnue")
         }
 
@@ -199,9 +188,6 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         )
     }
 
-    /**
-     * Logout — invalidate the server-side session.
-     */
     fun logout(token: String) {
         try {
             val request = Request.Builder()
@@ -210,21 +196,15 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
                 .header("Authorization", "Bearer $token")
                 .build()
             client.newCall(request).execute().close()
-        } catch (_: Exception) {
-            // Best effort
-        }
+        } catch (_: Exception) {}
     }
 
-    /**
-     * Push encrypted machine data to the cloud.
-     */
     fun pushMachines(token: String, encryptedData: String) {
         val body = gson.toJson(mapOf("data" to encryptedData)).toRequestBody(jsonType)
 
         val request = Request.Builder()
             .url("$workerUrl/account/machines")
             .put(body)
-            .header("Content-Type", "application/json")
             .header("Authorization", "Bearer $token")
             .build()
 
@@ -236,10 +216,6 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         }
     }
 
-    /**
-     * Pull encrypted machine data from the cloud.
-     * Returns empty string if no data stored yet.
-     */
     fun pullMachines(token: String): String {
         val request = Request.Builder()
             .url("$workerUrl/account/machines")
@@ -248,9 +224,7 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
             .build()
 
         val response = client.newCall(request).execute()
-        if (response.code == 401) {
-            throw Exception("Session expiree, reconnectez-vous")
-        }
+        if (response.code == 401) throw Exception("Session expiree, reconnectez-vous")
 
         val result = gson.fromJson(response.body!!.string(), Map::class.java)
         return result["machines"] as? String ?: ""
