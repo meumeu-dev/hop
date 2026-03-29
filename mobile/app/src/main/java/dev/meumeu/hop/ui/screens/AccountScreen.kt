@@ -267,7 +267,7 @@ private fun LoginRegisterView(
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
-            label = { Text("Email") },
+            label = { Text(if (isRegisterMode) "Email" else "Email ou username") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(

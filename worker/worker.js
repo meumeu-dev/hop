@@ -58,26 +58,34 @@ export default {
       }
       await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
 
-      // Generic error to prevent enumeration
-      // Ignore stale/empty values from KV eventual consistency
-      const existingEmail = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
-      if (existingEmail && existingEmail !== "" && existingEmail !== "DELETED") {
-        // Verify the account actually exists
-        const acctCheck = await env.HOP_KV.get(`account:${existingEmail}`);
-        if (acctCheck) {
-          return jsonResponse({ error: "inscription impossible" }, 409, cors);
+      // Check if email/username already taken
+      // Only block if the referenced account still exists AND has valid data
+      const existingEmailId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
+      if (existingEmailId) {
+        const acctData = await env.HOP_KV.get(`account:${existingEmailId}`);
+        if (acctData) {
+          try {
+            const acct = JSON.parse(acctData);
+            // Only block if account was created with the new salt-based scheme
+            if (acct.authSalt && acct.serverHash && acct.created > 1743200000000) {
+              return jsonResponse({ error: "inscription impossible" }, 409, cors);
+            }
+          } catch {}
         }
-        // Stale index — clean it up
-        await env.HOP_KV.delete(`account:email:${email.toLowerCase()}`);
+        // Old/stale account — allow overwrite
       }
 
-      const existingUser = await env.HOP_KV.get(`account:user:${username.toLowerCase()}`);
-      if (existingUser && existingUser !== "" && existingUser !== "DELETED") {
-        const acctCheck = await env.HOP_KV.get(`account:${existingUser}`);
-        if (acctCheck) {
-          return jsonResponse({ error: "inscription impossible" }, 409, cors);
+      const existingUserId = await env.HOP_KV.get(`account:user:${username.toLowerCase()}`);
+      if (existingUserId) {
+        const acctData = await env.HOP_KV.get(`account:${existingUserId}`);
+        if (acctData) {
+          try {
+            const acct = JSON.parse(acctData);
+            if (acct.authSalt && acct.serverHash && acct.created > 1743200000000) {
+              return jsonResponse({ error: "inscription impossible" }, 409, cors);
+            }
+          } catch {}
         }
-        await env.HOP_KV.delete(`account:user:${username.toLowerCase()}`);
       }
 
       const accountId = crypto.randomUUID();
@@ -142,20 +150,33 @@ export default {
       }
       await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
 
-      const accountId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
-      if (!accountId) {
-        // Return a fake but consistent salt to prevent email enumeration
-        const fakeSalt = await sha256("fake-salt:" + email.toLowerCase());
-        return jsonResponse({ salt: fakeSalt.slice(0, 32) }, 200, cors);
+      const fakeSalt = async () => {
+        const h = await sha256("fake-salt:" + email.toLowerCase());
+        return jsonResponse({ salt: h.slice(0, 32) }, 200, cors);
+      };
+
+      // Support lookup by email OR username
+      let accountId;
+      if (email.includes("@")) {
+        accountId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
+      } else {
+        accountId = await env.HOP_KV.get(`account:user:${email.toLowerCase()}`);
+      }
+      if (!accountId || accountId === "" || accountId === "DELETED") {
+        return await fakeSalt();
       }
 
       const accountData = await env.HOP_KV.get(`account:${accountId}`);
       if (!accountData) {
-        const fakeSalt = await sha256("fake-salt:" + email.toLowerCase());
-        return jsonResponse({ salt: fakeSalt.slice(0, 32) }, 200, cors);
+        // Stale index — clean it up
+        await env.HOP_KV.delete(`account:email:${email.toLowerCase()}`);
+        return await fakeSalt();
       }
 
       const account = JSON.parse(accountData);
+      if (!account.authSalt) {
+        return await fakeSalt();
+      }
       return jsonResponse({ salt: account.authSalt }, 200, cors);
     }
 
@@ -186,8 +207,14 @@ export default {
       }
       await env.HOP_KV.put(emailRlKey, String(emailRlCount + 1), { expirationTtl: 900 });
 
-      const accountId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
-      if (!accountId) {
+      // Support login by email OR username
+      let accountId;
+      if (email.includes("@")) {
+        accountId = await env.HOP_KV.get(`account:email:${email.toLowerCase()}`);
+      } else {
+        accountId = await env.HOP_KV.get(`account:user:${email.toLowerCase()}`);
+      }
+      if (!accountId || accountId === "" || accountId === "DELETED") {
         return jsonResponse({ error: "identifiants invalides" }, 401, cors);
       }
 

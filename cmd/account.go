@@ -32,12 +32,12 @@ hop login email@example.com  # email en argument`,
 		if len(args) > 0 {
 			email = args[0]
 		} else {
-			fmt.Print("Email: ")
+			fmt.Print("Email ou username: ")
 			e, _ := reader.ReadString('\n')
 			email = strings.TrimSpace(e)
 		}
 		if email == "" {
-			fmt.Fprintln(os.Stderr, "Email requis.")
+			fmt.Fprintln(os.Stderr, "Email ou username requis.")
 			os.Exit(1)
 		}
 
