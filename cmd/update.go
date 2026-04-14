@@ -64,9 +64,17 @@ var updateCmd = &cobra.Command{
 		fmt.Println()
 
 		arch := runtime.GOARCH
-		binaryName := fmt.Sprintf("hop-linux-%s", arch)
-		if arch == "arm" {
-			binaryName = "hop-linux-arm32"
+		var binaryName string
+		switch runtime.GOOS {
+		case "windows":
+			binaryName = fmt.Sprintf("hop-windows-%s.exe", arch)
+		case "darwin":
+			binaryName = fmt.Sprintf("hop-darwin-%s", arch)
+		default:
+			binaryName = fmt.Sprintf("hop-linux-%s", arch)
+			if arch == "arm" {
+				binaryName = "hop-linux-arm32"
+			}
 		}
 
 		fmt.Printf("→ Telechargement %s...\n", binaryName)
