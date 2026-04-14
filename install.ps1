@@ -9,8 +9,11 @@ $Repo       = 'meumeu-dev/hop'
 $InstallDir = Join-Path $env:LOCALAPPDATA 'hop'
 $BinaryName = 'hop.exe'
 
-$arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-if ($arch -ne 'X64') {
+$arch = $env:PROCESSOR_ARCHITECTURE
+# Under 32-bit PowerShell on 64-bit Windows, PROCESSOR_ARCHITECTURE is x86
+# but PROCESSOR_ARCHITEW6432 reveals the real arch
+if ($env:PROCESSOR_ARCHITEW6432) { $arch = $env:PROCESSOR_ARCHITEW6432 }
+if ($arch -ne 'AMD64') {
     Write-Error "Architecture non supportee sur Windows: $arch (amd64 uniquement)"
     exit 1
 }
