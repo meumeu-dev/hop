@@ -12,14 +12,20 @@ Un seul binaire pour gerer toutes tes machines. **Sandboxe par defaut** — zero
 curl -sL meumeu.dev/hop/install | bash
 ```
 
-**Windows** (PowerShell):
+**Windows** (PowerShell) — installeur auto (ajoute au PATH) :
+
+```powershell
+iwr -useb meumeu.dev/hop/install.ps1 | iex
+```
+
+Ou manuel :
 
 ```powershell
 iwr -Uri "https://github.com/meumeu-dev/hop/releases/latest/download/hop-windows-amd64.exe" -OutFile hop.exe
 .\hop.exe config
 ```
 
-Or download `hop-windows-amd64.exe` manually from the [releases page](https://github.com/meumeu-dev/hop/releases).
+> **hop est un CLI** — double-cliquer `hop.exe` depuis l'Explorateur ne sert a rien. Ouvre **PowerShell**, puis `cd` dans le dossier et lance `.\hop.exe <commande>`.
 
 ## Plateformes supportees
 
