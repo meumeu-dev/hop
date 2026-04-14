@@ -22,11 +22,8 @@ data class PairData(
     val version: String? = null
 )
 
-data class PairSession(
-    val pairId: String,
-    val token: String,
-    val code: String
-)
+// Since v3 the 8-char pairing code is the only session identifier.
+data class PairSession(val code: String)
 
 class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
 
@@ -46,27 +43,24 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
         val jsonData = gson.toJson(data).toByteArray()
         val encrypted = HopCrypto.encrypt(jsonData, code)
 
-        val body = gson.toJson(mapOf("data" to encrypted)).toRequestBody(jsonType)
+        val body = gson.toJson(mapOf("code" to code, "data" to encrypted)).toRequestBody(jsonType)
         val request = Request.Builder()
             .url("$workerUrl/pair")
             .post(body)
             .build()
 
         val response = client.newCall(request).execute()
+        when (response.code) {
+            409 -> throw IllegalStateException("Code deja utilise, retente")
+        }
         require(response.isSuccessful) { "Erreur serveur: HTTP ${response.code}" }
-
-        val result = gson.fromJson(response.body!!.string(), Map::class.java)
-        return PairSession(
-            pairId = result["pair_id"] as String,
-            token = result["token"] as String,
-            code = code
-        )
+        return PairSession(code = code)
     }
 
-    fun fetchPairData(pairId: String, code: String): PairData {
-        Log.d("HOP-PAIR", "fetchPairData pairId='$pairId' codeLen=${code.length}")
+    fun fetchPairData(code: String): PairData {
+        Log.d("HOP-PAIR", "fetchPairData code=$code")
         val request = Request.Builder()
-            .url("$workerUrl/pair/${pairId.trim()}")
+            .url("$workerUrl/pair/${code.trim()}")
             .get()
             .build()
 
@@ -76,65 +70,57 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
         require(response.isSuccessful) { "Erreur serveur: HTTP ${response.code}" }
 
         val bodyStr = response.body?.string()
-        Log.d("HOP-PAIR", "fetchPairData body: ${bodyStr?.take(100)}")
         if (bodyStr.isNullOrBlank()) throw IllegalStateException("Reponse vide du serveur")
 
         val result = gson.fromJson(bodyStr, Map::class.java)
         val encrypted = result["data"] as? String
         if (encrypted.isNullOrBlank()) {
-            Log.e("HOP-PAIR", "fetchPairData: 'data' field missing or null. Keys: ${result.keys}")
             throw IllegalStateException("Donnees de pairing manquantes dans la reponse")
         }
 
-        Log.d("HOP-PAIR", "fetchPairData decrypting ${encrypted.length} chars...")
         val decrypted = HopCrypto.decrypt(encrypted, code)
-        Log.d("HOP-PAIR", "fetchPairData decrypted: ${String(decrypted).take(100)}")
         return gson.fromJson(String(decrypted), PairData::class.java)
     }
 
     fun sendResponse(session: PairSession, data: PairData) {
-        Log.d("HOP-PAIR", "sendResponse pairId=${session.pairId} codeLen=${session.code.length} tokenLen=${session.token.length}")
-        Log.d("HOP-PAIR", "sendResponse data: hostname=${data.hostname} user=${data.user} pubKeyLen=${data.publicKey.length}")
         val jsonData = gson.toJson(data).toByteArray()
-        Log.d("HOP-PAIR", "sendResponse jsonData: ${String(jsonData).take(100)}")
         val encrypted = HopCrypto.encrypt(jsonData, session.code)
-        Log.d("HOP-PAIR", "sendResponse encrypted: ${encrypted.take(40)}...")
 
         val body = gson.toJson(mapOf("data" to encrypted)).toRequestBody(jsonType)
         val request = Request.Builder()
-            .url("$workerUrl/pair/${session.pairId}/response")
+            .url("$workerUrl/pair/${session.code}/response")
             .post(body)
-            .header("X-Pair-Token", session.token)
             .build()
 
         val response = client.newCall(request).execute()
         when (response.code) {
-            409 -> throw IllegalStateException("Une reponse a deja ete postee")
-            401 -> throw IllegalStateException("Token invalide")
+            429 -> throw IllegalStateException("Trop de reponses postees (DoS ?)")
         }
         require(response.isSuccessful) { "Erreur serveur: HTTP ${response.code}" }
     }
 
+    // Poll up to 5 response slots, first that decrypts wins. Fake responses
+    // from an attacker who doesn't know the code are silently skipped.
     fun waitForResponse(session: PairSession, timeoutMs: Long = 120_000): PairData {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val request = Request.Builder()
-                .url("$workerUrl/pair/${session.pairId}/response")
-                .get()
-                .header("X-Pair-Token", session.token)
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (response.code == 404) {
+            for (idx in 0 until 5) {
+                val request = Request.Builder()
+                    .url("$workerUrl/pair/${session.code}/response?idx=$idx")
+                    .get()
+                    .build()
+                val response = client.newCall(request).execute()
+                if (response.code == 404) { response.close(); continue }
+                val bodyStr = response.body?.string().orEmpty()
                 response.close()
-                Thread.sleep(2000)
-                continue
+                try {
+                    val result = gson.fromJson(bodyStr, Map::class.java)
+                    val encrypted = result["data"] as? String ?: continue
+                    val decrypted = HopCrypto.decrypt(encrypted, session.code)
+                    return gson.fromJson(String(decrypted), PairData::class.java)
+                } catch (_: Exception) { /* wrong code, keep trying */ }
             }
-
-            val result = gson.fromJson(response.body!!.string(), Map::class.java)
-            val encrypted = result["data"] as String
-            val decrypted = HopCrypto.decrypt(encrypted, session.code)
-            return gson.fromJson(String(decrypted), PairData::class.java)
+            Thread.sleep(2000)
         }
         throw IllegalStateException("Timeout: pas de reponse recue")
     }
@@ -142,9 +128,8 @@ class PairingClient(private val workerUrl: String = DEFAULT_WORKER_URL) {
     fun cleanup(session: PairSession) {
         try {
             val request = Request.Builder()
-                .url("$workerUrl/pair/${session.pairId}")
+                .url("$workerUrl/pair/${session.code}")
                 .delete()
-                .header("X-Pair-Token", session.token)
                 .build()
             client.newCall(request).execute().close()
         } catch (_: Exception) {}

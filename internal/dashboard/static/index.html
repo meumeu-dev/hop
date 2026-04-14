@@ -780,10 +780,10 @@
 
         // --- Pairing ---
         async function doPairing() {
-            const pairToken = document.getElementById('pair-code').value.trim();
+            const pairToken = document.getElementById('pair-code').value.trim().toLowerCase();
             const status = document.getElementById('pair-status');
-            if (!pairToken || pairToken.split('.').length !== 3) {
-                status.textContent = 'Colle le token complet affiche par hop pair.';
+            if (!/^[a-z0-9]{8}$/.test(pairToken)) {
+                status.textContent = 'Code invalide (8 caracteres a-z0-9).';
                 status.style.color = '#f85149';
                 return;
             }

@@ -80,7 +80,11 @@ func runExportFile(encrypted string) {
 func runExportCloud(encrypted string) {
 	workerURL := pairing.GetWorkerURL()
 
-	bodyJSON, _ := json.Marshal(map[string]string{"data": encrypted})
+	// v3: the worker endpoint is /pair and expects a {code, data} body.
+	// The code doubles as the lookup key and the import token — the user
+	// retypes it on the other machine.
+	code := pairing.GenerateCode()
+	bodyJSON, _ := json.Marshal(map[string]string{"code": code, "data": encrypted})
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Post(workerURL+"/pair", "application/json", strings.NewReader(string(bodyJSON)))
 	if err != nil {
@@ -89,23 +93,16 @@ func runExportCloud(encrypted string) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 409 {
+		fmt.Fprintln(os.Stderr, "Erreur: code deja utilise, retente")
+		os.Exit(1)
+	}
 	if resp.StatusCode != 200 {
 		fmt.Fprintf(os.Stderr, "Erreur upload: HTTP %d\n", resp.StatusCode)
 		os.Exit(1)
 	}
 
-	var result struct {
-		PairID string `json:"pair_id"`
-		Token  string `json:"token"`
-	}
-	json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&result)
-
-	if result.PairID == "" {
-		fmt.Fprintln(os.Stderr, "Erreur: reponse invalide du worker")
-		os.Exit(1)
-	}
-
-	importToken := "cloud:" + result.PairID
+	importToken := "cloud:" + code
 
 	fmt.Println("→ Config uploadee (chiffree, expire dans 2 min)")
 	fmt.Println()
@@ -125,16 +122,23 @@ var importCmd = &cobra.Command{
 		var encrypted string
 
 		if strings.HasPrefix(source, "cloud:") {
-			// Cloud import
-			pairID := strings.TrimPrefix(source, "cloud:")
-			if pairID == "" || strings.Contains(pairID, "/") || strings.Contains(pairID, "..") {
-				fmt.Fprintln(os.Stderr, "Token invalide")
+			// Cloud import — v3: code is 8 alphanumeric chars
+			code := strings.ToLower(strings.TrimPrefix(source, "cloud:"))
+			validCode := len(code) == 8
+			for _, c := range code {
+				if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+					validCode = false
+					break
+				}
+			}
+			if !validCode {
+				fmt.Fprintln(os.Stderr, "Token invalide (attendu: cloud:<8-chars>)")
 				os.Exit(1)
 			}
 
 			workerURL := pairing.GetWorkerURL()
 			client := &http.Client{Timeout: 15 * time.Second}
-			resp, err := client.Get(workerURL + "/pair/" + pairID)
+			resp, err := client.Get(workerURL + "/pair/" + code)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 				os.Exit(1)

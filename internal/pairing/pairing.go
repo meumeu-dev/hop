@@ -64,10 +64,6 @@ type PairSession struct {
 	Code string // 8-char alphanumeric code
 }
 
-// Backwards compat stubs for any caller that still builds PairSession with
-// old fields. Remove after 2.x is fully retired.
-func (s *PairSession) PairID() string { return s.Code }
-
 // GenerateCode creates an 8-character alphanumeric pairing code
 // 36^8 = ~2.8 trillion combinations (vs 900k for 6 digits)
 func GenerateCode() string {

@@ -197,8 +197,9 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                 val client = PairingClient(workerUrl)
                 val session = client.publishPairData(code, pairData)
 
-                val fullToken = "${session.pairId}.$code.${session.token}"
-                Log.i(TAG, "Pairing token generated (${fullToken.take(8)}...)")
+                // v3: the short code is the full token
+                val fullToken = code
+                Log.i(TAG, "Pairing code generated: $fullToken")
                 writeTokenForAdb(fullToken)
 
                 _state.value = _state.value.copy(
@@ -286,22 +287,12 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val cleaned = token.trim()
-                Log.i(TAG, "joinPairing cleaned: '${cleaned.take(60)}' (len=${cleaned.length})")
+                val code = token.trim().lowercase()
+                Log.i(TAG, "joinPairing code='$code' (len=${code.length})")
 
-                val parts = cleaned.split(".", limit = 3)
-                Log.i(TAG, "joinPairing parts: ${parts.size} -> [${parts.map { "'${it.take(20)}'" }}]")
-                if (parts.size != 3) throw Exception("Token invalide: ${parts.size} parties au lieu de 3")
-
-                val pairId = parts[0].trim()
-                val code = parts[1].trim()
-                val workerToken = parts[2].trim()
-
-                if (pairId.isEmpty()) throw Exception("pair_id vide")
-                if (code.isEmpty()) throw Exception("code vide")
-                if (workerToken.isEmpty()) throw Exception("worker token vide")
-
-                Log.i(TAG, "joinPairing pairId=$pairId code=$code tokenLen=${workerToken.length}")
+                if (!code.matches(Regex("^[a-z0-9]{8}$"))) {
+                    throw Exception("Code invalide: attendu 8 caracteres alphanumeriques")
+                }
 
                 val workerUrl = hopConfig.load().workerUrl
                 Log.i(TAG, "joinPairing worker=$workerUrl")
@@ -309,7 +300,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
                 _state.value = _state.value.copy(pairingStatus = "Recuperation des donnees...")
                 Log.i(TAG, "joinPairing fetching pair data...")
-                val hostData = client.fetchPairData(pairId, code)
+                val hostData = client.fetchPairData(code)
                 Log.i(TAG, "joinPairing found: hostname=${hostData.hostname} ip=${hostData.ip}")
 
                 _state.value = _state.value.copy(
@@ -334,7 +325,7 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
                     version = getAppVersion() + "-android"
                 )
 
-                val session = PairSession(pairId = pairId, token = workerToken, code = code)
+                val session = PairSession(code = code)
                 Log.i(TAG, "joinPairing sending response...")
                 client.sendResponse(session, myData)
                 Log.i(TAG, "joinPairing response sent OK")
@@ -402,13 +393,15 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- QR code scanned ---
     fun onQRCodeScanned(content: String) {
-        val trimmed = content.trim()
-        Log.i(TAG, "QR scanned: '${trimmed.take(40)}...' (len=${trimmed.length})")
-        if (trimmed.contains(".") && trimmed.split(".").size >= 3) {
-            // Relay token: pair_id.code.token (token part may contain dots)
-            joinPairing(trimmed)
-        } else if (trimmed.length == 8 && trimmed.all { it.isLetterOrDigit() }) {
-            joinPairingLAN(trimmed)
+        // v3: QR contains either "hop pair <code>" (shell form) or just the 8-char code
+        var trimmed = content.trim()
+        if (trimmed.startsWith("hop pair ")) {
+            trimmed = trimmed.removePrefix("hop pair ").trim()
+        }
+        val code = trimmed.lowercase()
+        Log.i(TAG, "QR scanned code='$code'")
+        if (code.matches(Regex("^[a-z0-9]{8}$"))) {
+            joinPairing(code)
         } else {
             Log.w(TAG, "Invalid QR content: '${trimmed.take(50)}'")
             _state.value = _state.value.copy(error = "QR code invalide: format non reconnu")
