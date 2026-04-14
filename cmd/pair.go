@@ -134,15 +134,24 @@ func runPairServer() {
 		return
 	}
 
-	// Default: register on worker + broadcast LAN simultaneously.
-	// Whichever side responds first wins.
-	fmt.Println("→ Enregistrement sur le relay...")
-	session, err := pairing.PublishPairData(code, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
-		os.Exit(1)
+	// Default: ask explicitly whether to use the Cloudflare relay. The
+	// relay can see that a pairing attempt happened (ciphertext stays
+	// opaque but metadata leaks) so we don't opt-in silently. LAN-only is
+	// zero-trace.
+	useRelay := readConfirm("Utiliser le relay Cloudflare (internet) en plus du LAN ? [o/N]: ")
+	fmt.Println()
+
+	var session *pairing.PairSession
+	if useRelay {
+		fmt.Println("→ Enregistrement sur le relay...")
+		var err error
+		session, err = pairing.PublishPairData(code, data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
+			os.Exit(1)
+		}
+		defer pairing.Cleanup(session)
 	}
-	defer pairing.Cleanup(session)
 
 	printPairShare(code)
 
@@ -150,9 +159,13 @@ func runPairServer() {
 		fmt.Println("⚠ Windows: si rien ne bouge, autorise hop.exe dans le parefeu (UDP 19876, TCP 19877).")
 	}
 	fmt.Println()
-	fmt.Println("En attente... (LAN + relay, 2 min)")
+	if useRelay {
+		fmt.Println("En attente... (LAN + relay, 2 min)")
+	} else {
+		fmt.Println("En attente... (LAN seul, 2 min)")
+	}
 
-	// Race LAN broadcast vs worker poll
+	// Race LAN broadcast vs worker poll (worker only if opted in)
 	type pairResult struct {
 		data *pairing.PairData
 		via  string
@@ -165,12 +178,14 @@ func runPairServer() {
 			resultCh <- pairResult{resp, "LAN"}
 		}
 	}()
-	go func() {
-		resp, err := pairing.WaitForResponse(session, 2*time.Minute)
-		if err == nil {
-			resultCh <- pairResult{resp, "relay"}
-		}
-	}()
+	if useRelay {
+		go func() {
+			resp, err := pairing.WaitForResponse(session, 2*time.Minute)
+			if err == nil {
+				resultCh <- pairResult{resp, "relay"}
+			}
+		}()
+	}
 
 	// Silent hint handler: listen to stdin for 'q' (QR) or 'u' (URL)
 	go handleShareHints(code)
@@ -202,6 +217,16 @@ func printPairShare(code string) {
 	} else {
 		fmt.Println("(tape [q]+Entree pour un QR code, [u]+Entree pour une URL courte)")
 	}
+}
+
+// graceAccept shows a 2-second countdown after displaying the remote
+// machine info; Ctrl+C aborts. Since the pairing code is the shared
+// authorization secret, a second "[o/N]" prompt would be pure friction.
+func graceAccept() bool {
+	fmt.Print("\n→ Acceptation dans 2s (Ctrl+C pour annuler)...")
+	time.Sleep(2 * time.Second)
+	fmt.Println(" ok")
+	return true
 }
 
 // handleShareHints reads stdin in the background; typing q/u reveals the
@@ -289,7 +314,10 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
 	}
 
-	if !readConfirm("\nAccepter ce pairing ? [o/N]: ") {
+	// The code is the shared secret — whoever has it is authorized by
+	// definition. We still give a 2s window to Ctrl+C in case the user
+	// shared the wrong code.
+	if !graceAccept() {
 		fmt.Println("Pairing annulé.")
 		os.Exit(0)
 	}
@@ -479,7 +507,7 @@ func runPairClientRelay(code string) {
 		fmt.Printf("→ Empreinte SSH: %s\n", ssh.FingerprintSHA256(parsedKey))
 	}
 
-	if !readConfirm("\nAccepter ce pairing ? [o/N]: ") {
+	if !graceAccept() {
 		fmt.Println("Pairing annulé.")
 		os.Exit(0)
 	}
