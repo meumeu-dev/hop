@@ -240,7 +240,7 @@ func handleShareHints(code string) {
 			printQRCode(code)
 			fmt.Println()
 		case "u", "url":
-			fmt.Printf("\nURL: https://meumeu.dev/hop/p/%s\n\n", code)
+			fmt.Printf("\nURL: https://meumeu.dev/hop/p/?c=%s\n\n", code)
 		}
 	}
 }
