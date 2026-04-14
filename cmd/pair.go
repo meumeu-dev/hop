@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"os/exec"
+	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -17,6 +18,26 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
+
+// currentUser returns the OS user name in a cross-platform way.
+// On Linux/macOS $USER is set; on Windows $USER is usually empty and
+// the shell exposes $USERNAME — so we fall back through os/user.
+func currentUser() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u := os.Getenv("USERNAME"); u != "" {
+		return u
+	}
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		// On Windows this may come back as "HOST\\user" — strip the prefix.
+		if idx := strings.LastIndex(u.Username, "\\"); idx >= 0 {
+			return u.Username[idx+1:]
+		}
+		return u.Username
+	}
+	return "unknown"
+}
 
 var pairMode string
 var pairShowQR bool
@@ -80,10 +101,7 @@ func buildPairData() (string, *pairing.PairData) {
 	}
 
 	localIP := detectLocalIP()
-	user := os.Getenv("USER")
-	if user == "" {
-		user = "unknown"
-	}
+	usr := currentUser()
 
 	code := pairing.GenerateCode()
 
@@ -106,7 +124,7 @@ func buildPairData() (string, *pairing.PairData) {
 		Hostname: hostname,
 		IP:       localIP,
 		IPs:      detectAllIPs(),
-		User:     user,
+		User:     usr,
 		PublicKey: pubKey,
 		HostKey:  hostKey,
 		Version:  version,
@@ -326,9 +344,12 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 		fmt.Fprintf(os.Stderr, "Erreur ajout clé SSH: %v\n", err)
 		os.Exit(1)
 	}
+	if err := ensureSSHFilePerms(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ Impossible de corriger les perms ~/.ssh: %v\n", err)
+	}
 
-	fmt.Printf("→ Pairing réussi avec '%s' !\n", response.Hostname)
-	fmt.Println("→ Clé SSH ajoutée")
+	fmt.Printf("→ Pairing réussi avec '%s' (user: %s)\n", response.Hostname, response.User)
+	fmt.Println("→ Clé SSH installée dans ~/.ssh/authorized_keys")
 
 	// Add remote machine to config — find best reachable IP
 	cfg, _ := config.Load()
@@ -352,16 +373,6 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 				Services: make(map[string]config.MachineService),
 			}
 
-			// Ask for alias
-			alias := askAlias(response.Hostname)
-			if alias != "" {
-				if cfg.Aliases == nil {
-					cfg.Aliases = make(map[string]string)
-				}
-				cfg.Aliases[alias] = response.Hostname
-				fmt.Printf("→ Alias '%s' -> '%s'\n", alias, response.Hostname)
-			}
-
 			cfg.Save()
 		}
 	}
@@ -376,15 +387,19 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 	}
 
 	finalName := response.Hostname
-	if cfg != nil && cfg.Aliases != nil {
-		for a, t := range cfg.Aliases {
-			if t == response.Hostname {
-				finalName = a
-				break
+
+	// Probe: does the freshly paired key actually let us log in?
+	if cfg != nil {
+		if m, ok := cfg.Machines[response.Hostname]; ok {
+			if probeSSHPairing(cfg, m) {
+				fmt.Println("→ Test SSH: OK")
+			} else {
+				fmt.Println("⚠ Test SSH: echec — verifie les perms ~/.ssh cote distant ou 'hop ssh " + finalName + " -v' pour debug")
 			}
 		}
 	}
-	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
+	fmt.Printf("\n→ Pour te connecter:  hop ssh %s\n", finalName)
+	fmt.Printf("   (renommer: hop alias add <nom> %s)\n", finalName)
 
 	// Check if the remote machine can reach us back
 	checkAndOfferTunnel(response.Hostname)
@@ -451,14 +466,14 @@ func buildClientResponse() (string, *pairing.PairData) {
 		os.Exit(1)
 	}
 
-	user := os.Getenv("USER")
+	usr := currentUser()
 	localIP := detectLocalIP()
 	response := &pairing.PairData{
 		Hostname:  hostname,
 		IP:        localIP,
 		IPs:       detectAllIPs(),
 		PublicKey: pubKey,
-		User:      user,
+		User:      usr,
 		Version:   version,
 	}
 
@@ -554,26 +569,15 @@ func finalizePairClient(serverData *pairing.PairData) {
 		Tunnel:   tunnel,
 		Services: make(map[string]config.MachineService),
 	}
-
-	// Ask for alias
-	alias := askAlias(serverData.Hostname)
-	if alias != "" {
-		if cfg.Aliases == nil {
-			cfg.Aliases = make(map[string]string)
-		}
-		cfg.Aliases[alias] = serverData.Hostname
-		fmt.Printf("→ Alias '%s' -> '%s'\n", alias, serverData.Hostname)
-	}
-
 	cfg.Save()
+	if err := ensureSSHFilePerms(); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ Impossible de corriger les perms ~/.ssh: %v\n", err)
+	}
 
 	finalName := serverData.Hostname
-	if alias != "" {
-		finalName = alias
-	}
 
 	fmt.Println()
-	fmt.Printf("→ Pairing réussi avec '%s' !\n", serverData.Hostname)
+	fmt.Printf("→ Pairing réussi avec '%s' (user: %s)\n", serverData.Hostname, serverData.User)
 	fmt.Printf("→ Machine ajoutée (IP: %s", serverData.IP)
 	if tunnel != "" {
 		fmt.Printf(", tunnel: %s", tunnel)
@@ -586,7 +590,13 @@ func finalizePairClient(serverData *pairing.PairData) {
 		applyCFEnvFromPair(serverData.CFEnv, serverData.CFDomain)
 	}
 
-	fmt.Printf("\n→ Tu peux maintenant faire: hop ssh %s\n", finalName)
+	if probeSSHPairing(cfg, cfg.Machines[serverData.Hostname]) {
+		fmt.Println("→ Test SSH: OK")
+	} else {
+		fmt.Println("⚠ Test SSH: echec — verifie les perms ~/.ssh cote distant ou 'hop ssh " + finalName + " -v' pour debug")
+	}
+	fmt.Printf("\n→ Pour te connecter:  hop ssh %s\n", finalName)
+	fmt.Printf("   (renommer: hop alias add <nom> %s)\n", finalName)
 
 	// Check if the remote can reach us
 	checkAndOfferTunnel(serverData.Hostname)
@@ -632,16 +642,53 @@ func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKe
 	fmt.Printf("    hop tunnel setup %s\n", server.Hostname)
 }
 
-func askAlias(hostname string) string {
-	input := readLine(fmt.Sprintf("\nAlias pour '%s' (entree pour skip): ", hostname))
-	if input == "" {
-		return ""
+// ensureSSHFilePerms fixes the classic cause of "hop ssh asks for password":
+// ~/.ssh or authorized_keys with world/group-readable bits. sshd refuses
+// pubkey auth when the file permissions are laxer than 0600/0700.
+func ensureSSHFilePerms() error {
+	if runtime.GOOS == "windows" {
+		return nil
 	}
-	if err := config.ValidateName(input); err != nil {
-		fmt.Fprintf(os.Stderr, "Alias invalide: %v\n", err)
-		return ""
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
 	}
-	return input
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.Chmod(sshDir, 0700); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	authKeys := filepath.Join(sshDir, "authorized_keys")
+	if _, err := os.Stat(authKeys); err == nil {
+		_ = os.Chmod(authKeys, 0600)
+	}
+	return nil
+}
+
+// probeSSHPairing does a 3-second non-interactive SSH attempt with BatchMode
+// to verify the pairing actually gives passwordless access. Returns true on
+// successful auth, false on timeout, password prompt, or any failure.
+func probeSSHPairing(cfg *config.Config, m config.Machine) bool {
+	if m.IP == "" && m.Tunnel == "" {
+		return false
+	}
+	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
+	target := m.User + "@" + m.IP
+	if m.IP == "" && m.Tunnel != "" {
+		target = m.User + "@" + m.Tunnel
+	}
+	args := []string{
+		"-i", hopKeyPath,
+		"-o", "IdentitiesOnly=yes",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=3",
+		target, "--", "true",
+	}
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run() == nil
 }
 
 // checkAndOfferTunnel warns if machines are on different subnets
