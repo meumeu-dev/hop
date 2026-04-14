@@ -47,15 +47,14 @@ func readLine(prompt string) string {
 }
 
 var pairCmd = &cobra.Command{
-	Use:   "pair [token]",
+	Use:   "pair [code]",
 	Short: "Appaire cette machine avec un autre hop",
 	Long: `Sans argument: met cette machine en attente de pairing (mode serveur).
-Avec un token: se connecte à la machine en attente (mode client).
+Avec un code: se connecte à la machine en attente (mode client).
 
-Le token est affiché par 'hop pair' sur l'autre machine.
-Formats:
-  Relay:   <pair_id>.<code>.<token>
-  LAN:     <code> (8 caracteres alphanumeriques)`,
+Le code est un mot de 8 caracteres affiche par 'hop pair' sur l'autre machine.
+Par defaut, LAN et relay Cloudflare tournent en parallele — le premier qui
+trouve gagne. Force un mode avec -m lan ou -m relay.`,
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		if len(args) == 0 {
@@ -126,24 +125,6 @@ func buildPairData() (string, *pairing.PairData) {
 func runPairServer() {
 	code, data := buildPairData()
 
-	// Ask mode if not specified via flag
-	if pairMode == "" || pairMode == "auto" {
-		fmt.Println("Mode de pairing:")
-		fmt.Println("  1) Auto (LAN + relay en parallele)")
-		fmt.Println("  2) LAN uniquement")
-		fmt.Println("  3) Relay uniquement")
-		choice := readLine("Choix [1]: ")
-		switch choice {
-		case "2", "lan":
-			pairMode = "lan"
-		case "3", "relay":
-			pairMode = "relay"
-		default:
-			pairMode = "auto"
-		}
-		fmt.Println()
-	}
-
 	switch pairMode {
 	case "lan":
 		runPairServerLAN(code, data)
@@ -153,8 +134,8 @@ func runPairServer() {
 		return
 	}
 
-	// Default: register on worker + broadcast LAN simultaneously
-	// First who responds wins
+	// Default: register on worker + broadcast LAN simultaneously.
+	// Whichever side responds first wins.
 	fmt.Println("→ Enregistrement sur le relay...")
 	session, err := pairing.PublishPairData(code, data)
 	if err != nil {
@@ -163,52 +144,36 @@ func runPairServer() {
 	}
 	defer pairing.Cleanup(session)
 
-	pairToken := session.PairID + "." + code + "." + session.Token
+	printPairShare(code)
 
-	fmt.Println()
-	fmt.Println("Sur l'autre machine, lance:")
-	fmt.Printf("  hop pair %s\n", pairToken)
-	fmt.Println()
-	fmt.Printf("Ou sur le meme reseau:  hop pair %s\n", code)
-	fmt.Println()
-	if pairShowQR {
-		fmt.Println("QR code (scanne avec l'app mobile):")
-		printQRCode(pairToken)
-	} else {
-		fmt.Println("(QR code: relance avec --qr)")
-	}
-
-	if err := copyToClipboard(pairToken); err == nil {
-		fmt.Println("(token copie dans le presse-papier)")
-	}
 	if runtime.GOOS == "windows" {
 		fmt.Println("⚠ Windows: si rien ne bouge, autorise hop.exe dans le parefeu (UDP 19876, TCP 19877).")
 	}
 	fmt.Println()
-	fmt.Println("En attente de connexion (LAN + relay)... (expire dans 2 min)")
+	fmt.Println("En attente... (LAN + relay, 2 min)")
 
-	// Race: LAN broadcast vs worker poll
+	// Race LAN broadcast vs worker poll
 	type pairResult struct {
 		data *pairing.PairData
 		via  string
 	}
-	resultCh := make(chan pairResult, 1)
+	resultCh := make(chan pairResult, 2)
 
-	// Start LAN broadcast in background
 	go func() {
 		resp, err := pairing.StartLANServerWithTimeout(code, data, 2*time.Minute)
 		if err == nil {
 			resultCh <- pairResult{resp, "LAN"}
 		}
 	}()
-
-	// Poll worker in background
 	go func() {
 		resp, err := pairing.WaitForResponse(session, 2*time.Minute)
 		if err == nil {
 			resultCh <- pairResult{resp, "relay"}
 		}
 	}()
+
+	// Silent hint handler: listen to stdin for 'q' (QR) or 'u' (URL)
+	go handleShareHints(code)
 
 	select {
 	case result := <-resultCh:
@@ -217,6 +182,41 @@ func runPairServer() {
 	case <-time.After(2 * time.Minute):
 		fmt.Fprintln(os.Stderr, "\nTimeout: aucune reponse recue.")
 		os.Exit(1)
+	}
+}
+
+// printPairShare prints the code plus a silent hint for QR / short URL.
+func printPairShare(code string) {
+	fmt.Println()
+	fmt.Printf("Code de pairing: %s\n", code)
+	if err := copyToClipboard(code); err == nil {
+		fmt.Println("(copie dans le presse-papier)")
+	}
+	fmt.Println()
+	fmt.Printf("Sur l'autre machine:  hop pair %s\n", code)
+	fmt.Println()
+	if pairShowQR {
+		fmt.Println("QR code:")
+		printQRCode(code)
+		fmt.Println()
+	} else {
+		fmt.Println("(tape [q]+Entree pour un QR code, [u]+Entree pour une URL courte)")
+	}
+}
+
+// handleShareHints reads stdin in the background; typing q/u reveals the
+// QR code or the short URL without interrupting the pairing wait.
+func handleShareHints(code string) {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
+		case "q", "qr":
+			fmt.Println()
+			printQRCode(code)
+			fmt.Println()
+		case "u", "url":
+			fmt.Printf("\nURL: https://meumeu.dev/hop/p/%s\n\n", code)
+		}
 	}
 }
 
@@ -247,7 +247,7 @@ func runPairServerLAN(code string, data *pairing.PairData) {
 }
 
 func runPairServerWorker(code string, data *pairing.PairData) {
-	fmt.Println("→ Enregistrement sur le serveur de pairing...")
+	fmt.Println("→ Enregistrement sur le relay...")
 	session, err := pairing.PublishPairData(code, data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
@@ -255,31 +255,17 @@ func runPairServerWorker(code string, data *pairing.PairData) {
 	}
 	defer pairing.Cleanup(session)
 
-	pairToken := session.PairID + "." + code + "." + session.Token
+	printPairShare(code)
+	fmt.Println()
+	fmt.Println("En attente de connexion... (relay, 2 min)")
 
-	fmt.Println()
-	fmt.Println("Sur l'autre machine, lance:")
-	fmt.Printf("  hop pair %s\n", pairToken)
-	fmt.Println()
-	if pairShowQR {
-		fmt.Println("QR code (scanne avec l'app mobile):")
-		printQRCode(pairToken)
-	} else {
-		fmt.Println("(QR code: relance avec --qr)")
-	}
-
-	if err := copyToClipboard(pairToken); err == nil {
-		fmt.Println("(aussi copié dans le presse-papier)")
-	}
-	fmt.Println()
-	fmt.Println("En attente de connexion... (expire dans 2 min)")
+	go handleShareHints(code)
 
 	response, err := pairing.WaitForResponse(session, 2*time.Minute)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nErreur: %v\n", err)
 		os.Exit(1)
 	}
-
 	finalizePairServer(response, code, data)
 }
 
@@ -376,20 +362,47 @@ func finalizePairServer(response *pairing.PairData, code string, data *pairing.P
 	checkAndOfferTunnel(response.Hostname)
 }
 
-func runPairClient(pairToken string) {
-	// Detect token format:
-	// - 8 chars alphanumeric → LAN mode
-	// - "<pair_id>.<code>.<token>" → Worker mode
+func runPairClient(code string) {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if len(code) != 8 || !isAlphanumeric(code) {
+		fmt.Fprintln(os.Stderr, "Code invalide: attendu 8 caracteres alphanumeriques.")
+		os.Exit(1)
+	}
 
-	// Check if it's a short code without dots (LAN mode)
-	// LAN code: 8 alphanumeric chars, no dots or colons
-	if len(pairToken) == 8 && !strings.Contains(pairToken, ".") && !strings.Contains(pairToken, ":") && isAlphanumeric(pairToken) {
-		runPairClientLAN(pairToken)
+	switch pairMode {
+	case "lan":
+		runPairClientLAN(code)
+		return
+	case "relay", "worker":
+		runPairClientRelay(code)
 		return
 	}
 
-	// Worker mode: pairID.code.token
-	runPairClientWorker(pairToken)
+	// Auto: try LAN briefly, then fall back to relay.
+	fmt.Println("→ Recherche sur le LAN... (3s)")
+	_, response := buildClientResponse()
+
+	lanResult := make(chan *pairing.PairData, 1)
+	go func() {
+		resp, err := pairing.ConnectLANWithTimeout(code, response, 3*time.Second)
+		if err == nil {
+			lanResult <- resp
+		} else {
+			lanResult <- nil
+		}
+	}()
+
+	select {
+	case serverData := <-lanResult:
+		if serverData != nil {
+			finalizePairClient(serverData)
+			return
+		}
+	case <-time.After(4 * time.Second):
+	}
+
+	fmt.Println("→ Pas trouve en LAN, tentative via relay...")
+	runPairClientRelay(code)
 }
 
 func isAlphanumeric(s string) bool {
@@ -448,19 +461,9 @@ func runPairClientLAN(code string) {
 	finalizePairClient(serverData)
 }
 
-func runPairClientWorker(pairToken string) {
-	parts := strings.SplitN(pairToken, ".", 3)
-	if len(parts) != 3 {
-		fmt.Fprintln(os.Stderr, "Token invalide. Copie le token complet affiché par 'hop pair'.")
-		os.Exit(1)
-	}
-
-	pairID := parts[0]
-	code := parts[1]
-	token := parts[2]
-
+func runPairClientRelay(code string) {
 	fmt.Println("→ Récupération des données de pairing...")
-	serverData, err := pairing.FetchPairData(pairID, code)
+	serverData, err := pairing.FetchPairData(code)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 		os.Exit(1)
@@ -482,18 +485,11 @@ func runPairClientWorker(pairToken string) {
 	}
 
 	_, response := buildClientResponse()
-
-	session := &pairing.PairSession{
-		PairID: pairID,
-		Token:  token,
-		Code:   code,
-	}
-
+	session := &pairing.PairSession{Code: code}
 	if err := pairing.SendResponse(session, response); err != nil {
 		fmt.Fprintf(os.Stderr, "Erreur: %v\n", err)
 		os.Exit(1)
 	}
-
 	finalizePairClient(serverData)
 }
 

@@ -57,12 +57,16 @@ type PairData struct {
 	Version   string   `json:"version,omitempty"`
 }
 
-// PairSession holds the state of a pairing session
+// PairSession holds the state of a pairing session.
+// Since v3 the code is both the lookup key AND the encryption secret —
+// no more UUID/token split. The worker rate-limits and expires after 120s.
 type PairSession struct {
-	PairID string // UUID returned by worker (lookup key)
-	Token  string // Bearer token for auth
-	Code   string // pairing code (encryption key only, never sent to worker)
+	Code string // 8-char alphanumeric code
 }
+
+// Backwards compat stubs for any caller that still builds PairSession with
+// old fields. Remove after 2.x is fully retired.
+func (s *PairSession) PairID() string { return s.Code }
 
 // GenerateCode creates an 8-character alphanumeric pairing code
 // 36^8 = ~2.8 trillion combinations (vs 900k for 6 digits)
@@ -221,49 +225,38 @@ func ValidateSSHPublicKey(pubKey string) error {
 	return nil
 }
 
-// PublishPairData encrypts and sends pair data to the worker
-// Returns a PairSession with the UUID lookup key and bearer token
+// PublishPairData encrypts `data` with `code` and deposits it on the worker
+// under the key `code`. The code is the ONLY lookup key — the client types it
+// and both sides derive the AES key from it via Argon2id.
 func PublishPairData(code string, data *PairData) (*PairSession, error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return nil, err
 	}
-
 	encrypted, err := Encrypt(jsonData, code)
 	if err != nil {
 		return nil, err
 	}
 
-	bodyJSON, _ := json.Marshal(map[string]string{"data": encrypted})
-	body := string(bodyJSON)
-	resp, err := httpClient.Post(GetWorkerURL()+"/pair", "application/json", strings.NewReader(body))
+	bodyJSON, _ := json.Marshal(map[string]string{"code": code, "data": encrypted})
+	resp, err := httpClient.Post(GetWorkerURL()+"/pair", "application/json", strings.NewReader(string(bodyJSON)))
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion au serveur de pairing: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 409 {
+		return nil, fmt.Errorf("code deja utilise, retente")
+	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("erreur serveur: HTTP %d", resp.StatusCode)
 	}
-
-	var result struct {
-		PairID string `json:"pair_id"`
-		Token  string `json:"token"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	return &PairSession{
-		PairID: result.PairID,
-		Token:  result.Token,
-		Code:   code,
-	}, nil
+	return &PairSession{Code: code}, nil
 }
 
-// FetchPairData retrieves and decrypts pair data from the worker
-func FetchPairData(pairID string, code string) (*PairData, error) {
-	resp, err := httpClient.Get(GetWorkerURL() + "/pair/" + pairID)
+// FetchPairData retrieves and decrypts pair data from the worker by code.
+func FetchPairData(code string) (*PairData, error) {
+	resp, err := httpClient.Get(GetWorkerURL() + "/pair/" + code)
 	if err != nil {
 		return nil, fmt.Errorf("erreur connexion: %w", err)
 	}
@@ -271,6 +264,9 @@ func FetchPairData(pairID string, code string) (*PairData, error) {
 
 	if resp.StatusCode == 404 {
 		return nil, fmt.Errorf("pairing non trouvé ou expiré")
+	}
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("erreur serveur: HTTP %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -289,94 +285,79 @@ func FetchPairData(pairID string, code string) (*PairData, error) {
 	if err := json.Unmarshal(decrypted, &pairData); err != nil {
 		return nil, err
 	}
-
 	return &pairData, nil
 }
 
-// SendResponse sends the client's response back through the worker (requires token)
+// SendResponse deposits the client's encrypted response under the same code.
+// No token — the worker allows up to 5 responses; the server picks the first
+// one that decrypts correctly.
 func SendResponse(session *PairSession, data *PairData) error {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-
 	encrypted, err := Encrypt(jsonData, session.Code)
 	if err != nil {
 		return err
 	}
-
 	bodyJSON, _ := json.Marshal(map[string]string{"data": encrypted})
-	body := string(bodyJSON)
-	req, err := http.NewRequest("POST", GetWorkerURL()+"/pair/"+session.PairID+"/response", strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Pair-Token", session.Token)
-
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Post(GetWorkerURL()+"/pair/"+session.Code+"/response",
+		"application/json", strings.NewReader(string(bodyJSON)))
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 409 {
-		return fmt.Errorf("une réponse a déjà été postée (possible attaque)")
+	if resp.StatusCode == 429 {
+		return fmt.Errorf("trop de réponses postées (DoS ?)")
 	}
-	if resp.StatusCode == 401 {
-		return fmt.Errorf("token invalide")
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("erreur serveur: HTTP %d", resp.StatusCode)
 	}
-
 	return nil
 }
 
-// WaitForResponse polls the worker for the client's response (requires token)
+// WaitForResponse polls the worker and tries each of the up-to-5 response
+// slots; returns the first that decrypts with the code. Fake responses from
+// an attacker who doesn't know the code are silently skipped.
 func WaitForResponse(session *PairSession, timeout time.Duration) (*PairData, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest("GET", GetWorkerURL()+"/pair/"+session.PairID+"/response", nil)
-		req.Header.Set("X-Pair-Token", session.Token)
-
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		if resp.StatusCode == 404 {
+		for idx := 0; idx < 5; idx++ {
+			resp, err := httpClient.Get(GetWorkerURL() + "/pair/" + session.Code + "/response?idx=" + fmt.Sprint(idx))
+			if err != nil {
+				break
+			}
+			if resp.StatusCode == 404 {
+				resp.Body.Close()
+				continue
+			}
+			var result struct {
+				Data string `json:"data"`
+			}
+			if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+				resp.Body.Close()
+				continue
+			}
 			resp.Body.Close()
-			time.Sleep(2 * time.Second)
-			continue
+			decrypted, err := Decrypt(result.Data, session.Code)
+			if err != nil {
+				continue
+			}
+			var pairData PairData
+			if err := json.Unmarshal(decrypted, &pairData); err != nil {
+				continue
+			}
+			return &pairData, nil
 		}
-
-		var result struct {
-			Data string `json:"data"`
-		}
-		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("réponse invalide du serveur")
-		}
-		resp.Body.Close()
-
-		decrypted, err := Decrypt(result.Data, session.Code)
-		if err != nil {
-			return nil, fmt.Errorf("déchiffrement échoué (possible attaque)")
-		}
-
-		var pairData PairData
-		if err := json.Unmarshal(decrypted, &pairData); err != nil {
-			return nil, fmt.Errorf("données de pairing corrompues")
-		}
-		return &pairData, nil
+		time.Sleep(2 * time.Second)
 	}
-
 	return nil, fmt.Errorf("timeout: pas de réponse reçue")
 }
 
-// Cleanup deletes pairing data from the worker (requires token)
+// Cleanup deletes the pairing session from the worker (best-effort).
 func Cleanup(session *PairSession) {
-	req, _ := http.NewRequest("DELETE", GetWorkerURL()+"/pair/"+session.PairID, nil)
-	req.Header.Set("X-Pair-Token", session.Token)
+	req, _ := http.NewRequest("DELETE", GetWorkerURL()+"/pair/"+session.Code, nil)
 	httpClient.Do(req)
 }
 

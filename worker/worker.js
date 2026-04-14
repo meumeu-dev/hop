@@ -321,142 +321,100 @@ export default {
       return jsonResponse({ ok: true }, 200, cors);
     }
 
-    // ==================== PAIRING ====================
+    // ==================== PAIRING (v3 — short code) ====================
+    // Pairing uses an 8-char alphanumeric code [a-z0-9]{8} shared by both sides.
+    // The code is BOTH the lookup key AND the AES-GCM encryption key (via Argon2id
+    // client-side). The worker never sees cleartext. Security budget:
+    //   - 36^8 ≈ 2.8e12 combinations
+    //   - TTL 120s
+    //   - Rate-limit: 60 req/IP/min on pair endpoints
+    //   - Up to 5 responses per code (first-valid-decrypt wins client-side)
 
+    const codeRe = /^[a-z0-9]{8}$/;
+
+    // Rate-limit helper: 60 req/min per IP on pairing paths
+    async function pairRateLimit() {
+      const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+      const rlKey = `rl:pair:${ip}`;
+      const n = parseInt(await env.HOP_KV.get(rlKey) || "0");
+      if (n >= 60) return true;
+      await env.HOP_KV.put(rlKey, String(n + 1), { expirationTtl: 60 });
+      return false;
+    }
+
+    // POST /pair  body: {code, data} — create session
     if (path === "/pair" && request.method === "POST") {
+      if (await pairRateLimit()) return jsonResponse({ error: "rate limit" }, 429, cors);
       let body;
       try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
-      const { data } = body;
-
-      if (!data) {
-        return jsonResponse({ error: "missing data" }, 400, cors);
+      const { code, data } = body || {};
+      if (!code || !codeRe.test(code)) return jsonResponse({ error: "invalid code" }, 400, cors);
+      if (!data || typeof data !== "string" || data.length > 32768) {
+        return jsonResponse({ error: "invalid data" }, 400, cors);
       }
 
-      const pairId = crypto.randomUUID();
-      const tokenBytes = new Uint8Array(32);
-      crypto.getRandomValues(tokenBytes);
-      const token = Array.from(tokenBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-      const tokenHash = await sha256(token);
-
-      const key = `pair:${pairId}`;
-      await env.HOP_KV.put(key, JSON.stringify({
-        data: data,
-        tokenHash: tokenHash,
-        created: Date.now(),
-        responsePosted: false,
-      }), { expirationTtl: 120 });
-
-      return jsonResponse({ ok: true, pair_id: pairId, token: token, expires_in: 120 }, 200, cors);
+      const key = `pair:${code}`;
+      if (await env.HOP_KV.get(key)) {
+        return jsonResponse({ error: "code already in use" }, 409, cors);
+      }
+      await env.HOP_KV.put(key, JSON.stringify({ data, created: Date.now(), respCount: 0 }),
+        { expirationTtl: 120 });
+      return jsonResponse({ ok: true, expires_in: 120 }, 200, cors);
     }
 
-    if (path.match(/^\/pair\/[0-9a-f-]{36}$/) && request.method === "GET") {
-      const pairId = path.split("/pair/")[1];
-      const key = `pair:${pairId}`;
-      const stored = await env.HOP_KV.get(key);
-
-      if (!stored) {
-        return jsonResponse({ error: "not found or expired" }, 404, cors);
-      }
-
-      const parsed = JSON.parse(stored);
-      return jsonResponse({ data: parsed.data }, 200, cors);
+    // GET /pair/<code> — fetch encrypted session data
+    const mPair = path.match(/^\/pair\/([a-z0-9]{8})$/);
+    if (mPair && request.method === "GET") {
+      if (await pairRateLimit()) return jsonResponse({ error: "rate limit" }, 429, cors);
+      const stored = await env.HOP_KV.get(`pair:${mPair[1]}`);
+      if (!stored) return jsonResponse({ error: "not found or expired" }, 404, cors);
+      return jsonResponse({ data: JSON.parse(stored).data }, 200, cors);
     }
 
-    if (path.match(/^\/pair\/[0-9a-f-]{36}$/) && request.method === "DELETE") {
-      const pairId = path.split("/pair/")[1];
-      const token = request.headers.get("X-Pair-Token");
-
-      if (!token) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
-      }
-
-      const key = `pair:${pairId}`;
-      const stored = await env.HOP_KV.get(key);
-      if (!stored) {
-        return jsonResponse({ error: "not found" }, 404, cors);
-      }
-
-      const parsed = JSON.parse(stored);
-      const tokenHash = await sha256(token);
-      if (tokenHash !== parsed.tokenHash) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
-      }
-
-      await env.HOP_KV.delete(key);
-      await env.HOP_KV.delete(`${key}:response`);
+    // DELETE /pair/<code> — cleanup (best-effort, TTL handles it anyway)
+    if (mPair && request.method === "DELETE") {
+      if (await pairRateLimit()) return jsonResponse({ error: "rate limit" }, 429, cors);
+      await env.HOP_KV.delete(`pair:${mPair[1]}`);
+      for (let i = 0; i < 5; i++) await env.HOP_KV.delete(`pair:${mPair[1]}:r:${i}`);
       return jsonResponse({ ok: true }, 200, cors);
     }
 
-    if (path.match(/^\/pair\/[0-9a-f-]{36}\/response$/) && request.method === "POST") {
-      const pairId = path.split("/")[2];
-      const token = request.headers.get("X-Pair-Token");
-
-      if (!token) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
-      }
-
-      const key = `pair:${pairId}`;
-      const stored = await env.HOP_KV.get(key);
-      if (!stored) {
-        return jsonResponse({ error: "not found" }, 404, cors);
-      }
-
+    // POST /pair/<code>/response  body: {data} — deposit an encrypted response
+    const mResp = path.match(/^\/pair\/([a-z0-9]{8})\/response$/);
+    if (mResp && request.method === "POST") {
+      if (await pairRateLimit()) return jsonResponse({ error: "rate limit" }, 429, cors);
+      const code = mResp[1];
+      const stored = await env.HOP_KV.get(`pair:${code}`);
+      if (!stored) return jsonResponse({ error: "not found" }, 404, cors);
       const parsed = JSON.parse(stored);
-      const tokenHash = await sha256(token);
-      if (tokenHash !== parsed.tokenHash) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
-      }
-
-      if (parsed.responsePosted) {
-        return jsonResponse({ error: "response already posted" }, 409, cors);
-      }
+      if (parsed.respCount >= 5) return jsonResponse({ error: "too many responses" }, 429, cors);
 
       let body;
       try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
-      if (!body.data) {
-        return jsonResponse({ error: "missing data" }, 400, cors);
+      if (!body.data || typeof body.data !== "string" || body.data.length > 32768) {
+        return jsonResponse({ error: "invalid data" }, 400, cors);
       }
 
-      parsed.responsePosted = true;
-      await env.HOP_KV.put(key, JSON.stringify(parsed), { expirationTtl: 120 });
+      const idx = parsed.respCount;
+      await env.HOP_KV.put(`pair:${code}:r:${idx}`, body.data, { expirationTtl: 120 });
+      parsed.respCount = idx + 1;
+      await env.HOP_KV.put(`pair:${code}`, JSON.stringify(parsed), { expirationTtl: 120 });
 
-      const responseKey = `${key}:response`;
-      await env.HOP_KV.put(responseKey, JSON.stringify({
-        data: body.data,
-        created: Date.now(),
-      }), { expirationTtl: 120 });
-
-      return jsonResponse({ ok: true }, 200, cors);
+      return jsonResponse({ ok: true, idx }, 200, cors);
     }
 
-    if (path.match(/^\/pair\/[0-9a-f-]{36}\/response$/) && request.method === "GET") {
-      const pairId = path.split("/")[2];
-      const token = request.headers.get("X-Pair-Token");
-
-      if (!token) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
+    // GET /pair/<code>/response?idx=N — fetch Nth response (0..4)
+    if (mResp && request.method === "GET") {
+      if (await pairRateLimit()) return jsonResponse({ error: "rate limit" }, 429, cors);
+      const code = mResp[1];
+      const idxStr = url.searchParams.get("idx") || "0";
+      const idx = parseInt(idxStr);
+      if (isNaN(idx) || idx < 0 || idx > 4) {
+        return jsonResponse({ error: "invalid idx" }, 400, cors);
       }
-
-      const key = `pair:${pairId}`;
-      const stored = await env.HOP_KV.get(key);
-      if (!stored) {
-        return jsonResponse({ error: "not found" }, 404, cors);
-      }
-
-      const parsed = JSON.parse(stored);
-      const tokenHash = await sha256(token);
-      if (tokenHash !== parsed.tokenHash) {
-        return jsonResponse({ error: "unauthorized" }, 401, cors);
-      }
-
-      const responseKey = `${key}:response`;
-      const responseStored = await env.HOP_KV.get(responseKey);
-
-      if (!responseStored) {
-        return jsonResponse({ error: "no response yet" }, 404, cors);
-      }
-
-      return jsonResponse(JSON.parse(responseStored), 200, cors);
+      const stored = await env.HOP_KV.get(`pair:${code}:r:${idx}`);
+      if (!stored) return jsonResponse({ error: "no response" }, 404, cors);
+      return jsonResponse({ data: stored }, 200, cors);
     }
 
     if (path === "/health") {

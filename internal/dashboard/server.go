@@ -984,16 +984,15 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse pair token
-	parts := strings.SplitN(req.PairToken, ".", 3)
-	if len(parts) != 3 {
-		jsonError(w, "token invalide", 400)
+	// Token is now a simple 8-char code (v3)
+	code := strings.ToLower(strings.TrimSpace(req.PairToken))
+	if len(code) != 8 {
+		jsonError(w, "code invalide", 400)
 		return
 	}
-	pairID, code, token := parts[0], parts[1], parts[2]
 
 	// Fetch server's pair data
-	serverData, err := pairing.FetchPairData(pairID, code)
+	serverData, err := pairing.FetchPairData(code)
 	if err != nil {
 		jsonError(w, err.Error(), 400)
 		return
@@ -1029,7 +1028,7 @@ func handlePair(w http.ResponseWriter, r *http.Request) {
 	}
 	configMu.Unlock()
 
-	session := &pairing.PairSession{PairID: pairID, Token: token, Code: code}
+	session := &pairing.PairSession{Code: code}
 	if err := pairing.SendResponse(session, response); err != nil {
 		jsonError(w, "erreur envoi reponse", 500)
 		return
@@ -1125,9 +1124,8 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := session.PairID + "." + code + "." + session.Token
 	activePairSession = session
-	activePairToken = token
+	activePairToken = code
 	activePairResult = nil
 
 	// Start polling in background
@@ -1171,7 +1169,7 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":    true,
-		"token": token,
+		"token": code,
 		"code":  code,
 	})
 }

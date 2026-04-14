@@ -218,6 +218,62 @@ func ConnectLAN(code string, data *PairData) (*PairData, error) {
 	}
 }
 
+// ConnectLANWithTimeout is ConnectLAN with a bounded wait (used by the auto
+// client flow: listen a few seconds, fall back to relay if nothing).
+func ConnectLANWithTimeout(code string, data *PairData, timeout time.Duration) (*PairData, error) {
+	udpAddr := &net.UDPAddr{Port: lanBroadcastPort}
+	conn, err := net.ListenUDP("udp4", udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("impossible d'écouter sur le port UDP %d: %w", lanBroadcastPort, err)
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(timeout))
+
+	buf := make([]byte, 65536)
+	for {
+		n, remoteAddr, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				return nil, fmt.Errorf("timeout LAN")
+			}
+			return nil, err
+		}
+
+		msg := string(buf[:n])
+		if !strings.HasPrefix(msg, lanPrefix) {
+			continue
+		}
+		encrypted := strings.TrimPrefix(msg, lanPrefix)
+		decrypted, err := Decrypt(encrypted, code)
+		if err != nil {
+			continue
+		}
+
+		var serverData PairData
+		if err := json.Unmarshal(decrypted, &serverData); err != nil {
+			continue
+		}
+
+		jsonResp, _ := json.Marshal(data)
+		encResp, err := Encrypt(jsonResp, code)
+		if err != nil {
+			return nil, err
+		}
+		tcpAddr := net.JoinHostPort(remoteAddr.IP.String(), fmt.Sprintf("%d", lanTCPPort))
+		tcpConn, err := net.DialTimeout("tcp", tcpAddr, 5*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("erreur connexion TCP vers %s: %w", tcpAddr, err)
+		}
+		defer tcpConn.Close()
+		tcpConn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err := tcpConn.Write([]byte(encResp)); err != nil {
+			return nil, err
+		}
+		return &serverData, nil
+	}
+}
+
 // StartLANServerWithTimeout is like StartLANServer but with a custom timeout.
 // Used for fallback logic (try LAN briefly, then switch to worker).
 func StartLANServerWithTimeout(code string, data *PairData, timeout time.Duration) (*PairData, error) {
