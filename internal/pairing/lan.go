@@ -9,6 +9,51 @@ import (
 	"time"
 )
 
+// broadcastAddrs returns the list of broadcast addresses to fan a pairing
+// announce to. We include the global 255.255.255.255 plus every private
+// subnet's directed broadcast (e.g. 192.168.1.255), because Windows often
+// drops 255.255.255.255 on multi-homed hosts and routers may not relay it.
+func broadcastAddrs() []*net.UDPAddr {
+	addrs := []*net.UDPAddr{{IP: net.IPv4bcast, Port: lanBroadcastPort}}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return addrs
+	}
+	for _, ifi := range ifaces {
+		if ifi.Flags&net.FlagUp == 0 || ifi.Flags&net.FlagBroadcast == 0 || ifi.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		ipaddrs, err := ifi.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range ipaddrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok || ipnet.IP.To4() == nil {
+				continue
+			}
+			bcast := make(net.IP, 4)
+			for i := 0; i < 4; i++ {
+				bcast[i] = ipnet.IP.To4()[i] | ^ipnet.Mask[i]
+			}
+			addrs = append(addrs, &net.UDPAddr{IP: bcast, Port: lanBroadcastPort})
+		}
+	}
+	return addrs
+}
+
+// sendBroadcasts sends msg to every discovered broadcast address, best-effort.
+func sendBroadcasts(msg []byte) {
+	for _, addr := range broadcastAddrs() {
+		conn, err := net.DialUDP("udp4", nil, addr)
+		if err != nil {
+			continue
+		}
+		conn.Write(msg)
+		conn.Close()
+	}
+}
+
 const (
 	lanBroadcastPort = 19876
 	lanTCPPort       = 19877
@@ -44,28 +89,17 @@ func StartLANServer(code string, data *PairData) (*PairData, error) {
 
 	// Start UDP broadcast goroutine
 	go func() {
-		conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{
-			IP:   net.IPv4bcast,
-			Port: lanBroadcastPort,
-		})
-		if err != nil {
-			errCh <- fmt.Errorf("erreur broadcast UDP: %w", err)
-			return
-		}
-		defer conn.Close()
-
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
-		// Send immediately first
-		conn.Write([]byte(broadcastMsg))
+		sendBroadcasts([]byte(broadcastMsg))
 
 		for {
 			select {
 			case <-stopBroadcast:
 				return
 			case <-ticker.C:
-				conn.Write([]byte(broadcastMsg))
+				sendBroadcasts([]byte(broadcastMsg))
 			}
 		}
 	}()
@@ -210,27 +244,17 @@ func StartLANServerWithTimeout(code string, data *PairData, timeout time.Duratio
 	stopBroadcast := make(chan struct{})
 
 	go func() {
-		conn, err := net.DialUDP("udp4", nil, &net.UDPAddr{
-			IP:   net.IPv4bcast,
-			Port: lanBroadcastPort,
-		})
-		if err != nil {
-			errCh <- fmt.Errorf("erreur broadcast UDP: %w", err)
-			return
-		}
-		defer conn.Close()
-
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
-		conn.Write([]byte(broadcastMsg))
+		sendBroadcasts([]byte(broadcastMsg))
 
 		for {
 			select {
 			case <-stopBroadcast:
 				return
 			case <-ticker.C:
-				conn.Write([]byte(broadcastMsg))
+				sendBroadcasts([]byte(broadcastMsg))
 			}
 		}
 	}()

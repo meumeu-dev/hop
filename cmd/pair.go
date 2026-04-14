@@ -19,6 +19,7 @@ import (
 )
 
 var pairMode string
+var pairShowQR bool
 
 // readConfirm reads a yes/no from stdin. Returns true if confirmed or stdin is closed.
 func readConfirm(prompt string) bool {
@@ -170,11 +171,18 @@ func runPairServer() {
 	fmt.Println()
 	fmt.Printf("Ou sur le meme reseau:  hop pair %s\n", code)
 	fmt.Println()
-	fmt.Println("QR code (scanne avec l'app mobile):")
-	printQRCode(pairToken)
+	if pairShowQR {
+		fmt.Println("QR code (scanne avec l'app mobile):")
+		printQRCode(pairToken)
+	} else {
+		fmt.Println("(QR code: relance avec --qr)")
+	}
 
 	if err := copyToClipboard(pairToken); err == nil {
 		fmt.Println("(token copie dans le presse-papier)")
+	}
+	if runtime.GOOS == "windows" {
+		fmt.Println("⚠ Windows: si rien ne bouge, autorise hop.exe dans le parefeu (UDP 19876, TCP 19877).")
 	}
 	fmt.Println()
 	fmt.Println("En attente de connexion (LAN + relay)... (expire dans 2 min)")
@@ -222,6 +230,10 @@ func runPairServerLAN(code string, data *pairing.PairData) {
 		fmt.Println()
 		fmt.Println("(aussi copié dans le presse-papier)")
 	}
+	if runtime.GOOS == "windows" {
+		fmt.Println()
+		fmt.Println("⚠ Windows: autorise hop.exe dans le parefeu (UDP 19876, TCP 19877).")
+	}
 	fmt.Println()
 	fmt.Println("En attente de connexion LAN... (expire dans 2 min)")
 
@@ -249,8 +261,12 @@ func runPairServerWorker(code string, data *pairing.PairData) {
 	fmt.Println("Sur l'autre machine, lance:")
 	fmt.Printf("  hop pair %s\n", pairToken)
 	fmt.Println()
-	fmt.Println("QR code (scanne avec l'app mobile):")
-	printQRCode(pairToken)
+	if pairShowQR {
+		fmt.Println("QR code (scanne avec l'app mobile):")
+		printQRCode(pairToken)
+	} else {
+		fmt.Println("(QR code: relance avec --qr)")
+	}
 
 	if err := copyToClipboard(pairToken); err == nil {
 		fmt.Println("(aussi copié dans le presse-papier)")
@@ -812,5 +828,6 @@ func splitSpaces(s string) []string {
 
 func init() {
 	pairCmd.Flags().StringVarP(&pairMode, "mode", "m", "auto", "Mode de pairing: auto, lan, relay")
+	pairCmd.Flags().BoolVar(&pairShowQR, "qr", false, "Affiche un QR code du token")
 	rootCmd.AddCommand(pairCmd)
 }
