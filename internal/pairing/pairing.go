@@ -457,13 +457,16 @@ func tryElevateAndInstallKey(pubKey string) {
 
 // fixWindowsAdminACL runs icacls to match OpenSSH Windows' expectations
 // on administrators_authorized_keys: no inheritance, only Administrators
-// and SYSTEM with full control.
+// and SYSTEM with full control. Uses well-known SIDs so it works on any
+// localized Windows (fr: "Administrateurs", de: "Administratoren", etc.)
+//   S-1-5-32-544 = BUILTIN\Administrators
+//   S-1-5-18     = NT AUTHORITY\SYSTEM
 func fixWindowsAdminACL(path string) {
 	if runtime.GOOS != "windows" {
 		return
 	}
 	_ = exec.Command("icacls", path, "/inheritance:r",
-		"/grant", "Administrators:F", "/grant", "SYSTEM:F").Run()
+		"/grant", "*S-1-5-32-544:F", "/grant", "*S-1-5-18:F").Run()
 }
 
 // ApplyCFConfig saves the Cloudflare domain config (NOT the API key — that goes via SSH)
