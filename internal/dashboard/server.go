@@ -38,7 +38,6 @@ var configMu sync.Mutex
 // Active pairing session for dashboard-initiated pairing
 var activePairMu sync.Mutex
 var activePairSession *pairing.PairSession
-var activePairToken string
 var activePairResult *pairing.PairData
 
 type machineReq struct {
@@ -1087,7 +1086,7 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 	if activePairSession != nil {
 		pairing.Cleanup(activePairSession)
 		activePairSession = nil
-		activePairToken = ""
+
 		activePairResult = nil
 	}
 
@@ -1125,7 +1124,7 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activePairSession = session
-	activePairToken = code
+
 	activePairResult = nil
 
 	// Start polling in background
@@ -1138,7 +1137,7 @@ func handlePairStart(w http.ResponseWriter, r *http.Request) {
 			if activePairSession == session {
 				pairing.Cleanup(session)
 				activePairSession = nil
-				activePairToken = ""
+
 			}
 			return
 		}
@@ -1194,7 +1193,7 @@ func handlePairStatus(w http.ResponseWriter, r *http.Request) {
 	if activePairResult != nil {
 		hostname := activePairResult.Hostname
 		activePairSession = nil
-		activePairToken = ""
+
 		activePairResult = nil
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{

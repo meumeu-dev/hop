@@ -13,7 +13,6 @@ import (
 )
 
 var updateRemoteYes bool
-var updateRemoteMachine string
 
 var updateRemoteCmd = &cobra.Command{
 	Use:   "push-update [machine]",

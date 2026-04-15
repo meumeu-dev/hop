@@ -56,17 +56,6 @@ func readConfirm(prompt string) bool {
 	return input == "o" || input == "oui" || input == "y" || input == "yes"
 }
 
-// readLine reads a line from stdin, returns empty string if stdin is closed
-func readLine(prompt string) string {
-	fmt.Print(prompt)
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(input)
-}
-
 var pairCmd = &cobra.Command{
 	Use:   "pair [code]",
 	Short: "Appaire cette machine avec un autre hop",
@@ -600,46 +589,6 @@ func finalizePairClient(serverData *pairing.PairData) {
 
 	// Check if the remote can reach us
 	checkAndOfferTunnel(serverData.Hostname)
-}
-
-func transferAndSetupTunnel(server *pairing.PairData, cfDomain, cfEmail, cfAPIKey string) {
-	target := server.User + "@" + server.IP
-	hopKeyPath := filepath.Join(config.HopDir(), "keys", "hop_ed25519")
-
-	envContent := pairing.BuildCFEnvContent(cfEmail, cfAPIKey, cfDomain)
-
-	fmt.Printf("  → Envoi vers %s...\n", target)
-
-	sshArgs := []string{"-i", hopKeyPath}
-
-	// Pin host key if available from pairing
-	if server.HostKey != "" {
-		knownHostsPath := filepath.Join(config.HopDir(), "known_hosts_tmp")
-		knownEntry := fmt.Sprintf("%s %s\n", server.IP, server.HostKey)
-		os.WriteFile(knownHostsPath, []byte(knownEntry), 0600)
-		defer os.Remove(knownHostsPath)
-		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile="+knownHostsPath)
-	} else {
-		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=accept-new")
-	}
-
-	sshArgs = append(sshArgs, target, "--",
-		"bash", "-c", "mkdir -p ~/.hop && cat > ~/.hop/cloudflare.env && chmod 600 ~/.hop/cloudflare.env")
-
-	sshCmd := exec.Command("ssh", sshArgs...)
-	sshCmd.Stdin = strings.NewReader(envContent)
-	sshCmd.Stdout = os.Stdout
-	sshCmd.Stderr = os.Stderr
-	if err := sshCmd.Run(); err != nil {
-		fmt.Printf("  → Erreur SSH: %v\n", err)
-		fmt.Println("  → Tu peux transférer manuellement avec: hop tunnel setup")
-		return
-	}
-
-	fmt.Println("  → Identifiants transférés !")
-	fmt.Println()
-	fmt.Printf("  → Pour finaliser, lance sur %s:\n", server.Hostname)
-	fmt.Printf("    hop tunnel setup %s\n", server.Hostname)
 }
 
 // ensureSSHFilePerms fixes the classic cause of "hop ssh asks for password":
