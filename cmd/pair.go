@@ -613,9 +613,10 @@ func ensureSSHFilePerms() error {
 	return nil
 }
 
-// probeSSHPairing does a 3-second non-interactive SSH attempt with BatchMode
-// to verify the pairing actually gives passwordless access. Returns true on
-// successful auth, false on timeout, password prompt, or any failure.
+// probeSSHPairing does a non-interactive SSH attempt to verify the pairing
+// actually gives passwordless access. Retries up to 5 times every 2 seconds
+// because on Windows the remote side may still be waiting for the user to
+// accept a UAC prompt before the admin authorized_keys file exists.
 func probeSSHPairing(cfg *config.Config, m config.Machine) bool {
 	if m.IP == "" && m.Tunnel == "" {
 		return false
@@ -633,11 +634,19 @@ func probeSSHPairing(cfg *config.Config, m config.Machine) bool {
 		"-o", "ConnectTimeout=3",
 		target, "--", "true",
 	}
-	cmd := exec.Command("ssh", args...)
-	cmd.Stdin = nil
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	for i := 0; i < 5; i++ {
+		if i > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		cmd := exec.Command("ssh", args...)
+		cmd.Stdin = nil
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if cmd.Run() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // checkAndOfferTunnel warns if machines are on different subnets

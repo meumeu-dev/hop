@@ -436,7 +436,8 @@ func appendKeyUnique(path, pubKey string) error {
 
 // tryElevateAndInstallKey re-launches hop.exe elevated via UAC to
 // install the pub key into administrators_authorized_keys. No-op on
-// non-Windows. Returns best-effort — user can still decline UAC.
+// non-Windows. Waits up to 60s for the UAC prompt to be accepted —
+// longer than that and the user probably walked away, we give up.
 func tryElevateAndInstallKey(pubKey string) {
 	if runtime.GOOS != "windows" {
 		return
@@ -445,14 +446,24 @@ func tryElevateAndInstallKey(pubKey string) {
 	if err != nil {
 		return
 	}
+	fmt.Println("⚠ Une fenetre UAC va s'afficher : clique OUI pour finaliser le pairing (compte admin Windows).")
 	arg := base64.StdEncoding.EncodeToString([]byte(pubKey))
-	// PowerShell Start-Process -Verb RunAs triggers the UAC prompt.
-	// -Wait so we block until the elevated hop finishes.
 	ps := fmt.Sprintf(
 		`Start-Process -FilePath "%s" -ArgumentList '_win-admin-authkey','%s' -Verb RunAs -Wait -WindowStyle Hidden`,
 		self, arg,
 	)
-	exec.Command("powershell", "-NoProfile", "-Command", ps).Run()
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Run() }()
+	select {
+	case <-done:
+		// Whether user accepted or declined, we're done.
+	case <-time.After(60 * time.Second):
+		// User didn't act — kill the powershell helper so hop returns.
+		_ = cmd.Process.Kill()
+		fmt.Println("⚠ UAC non accepte dans les 60s — la pubkey n'est PAS dans administrators_authorized_keys.")
+		fmt.Println("  Relance 'hop pair' ou ajoute-la a la main dans C:\\ProgramData\\ssh\\.")
+	}
 }
 
 // fixWindowsAdminACL runs icacls to match OpenSSH Windows' expectations
