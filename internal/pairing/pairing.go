@@ -384,15 +384,22 @@ func AddAuthorizedKey(pubKey string) error {
 		adminFile := filepath.Join(adminDir, "administrators_authorized_keys")
 		if _, err := os.Stat(adminDir); err == nil {
 			if err := appendKeyUnique(adminFile, pubKey); err == nil {
-				// OpenSSH Windows is strict about ACLs on this file —
-				// purge inheritance, grant only Administrators + SYSTEM.
 				fixWindowsAdminACL(adminFile)
+			} else if os.IsPermission(err) {
+				// Not elevated — trigger a UAC prompt via PowerShell
+				// Start-Process -Verb RunAs, piping the key to a hidden
+				// subcommand in hop itself.
+				tryElevateAndInstallKey(pubKey)
 			}
-			// If append failed (not admin / no permission) we silently
-			// fall through — the per-user file was still updated.
 		}
 	}
 	return nil
+}
+
+// AppendKeyUniqueExported is exported so the hidden Windows elevated
+// helper (cmd/winadmin.go) can reuse the same dedupe logic.
+func AppendKeyUniqueExported(path, pubKey string) error {
+	return appendKeyUnique(path, pubKey)
 }
 
 func appendKeyUnique(path, pubKey string) error {
@@ -408,6 +415,27 @@ func appendKeyUnique(path, pubKey string) error {
 	defer f.Close()
 	_, err = f.WriteString(pubKey + "\n")
 	return err
+}
+
+// tryElevateAndInstallKey re-launches hop.exe elevated via UAC to
+// install the pub key into administrators_authorized_keys. No-op on
+// non-Windows. Returns best-effort — user can still decline UAC.
+func tryElevateAndInstallKey(pubKey string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return
+	}
+	arg := base64.StdEncoding.EncodeToString([]byte(pubKey))
+	// PowerShell Start-Process -Verb RunAs triggers the UAC prompt.
+	// -Wait so we block until the elevated hop finishes.
+	ps := fmt.Sprintf(
+		`Start-Process -FilePath "%s" -ArgumentList '_win-admin-authkey','%s' -Verb RunAs -Wait -WindowStyle Hidden`,
+		self, arg,
+	)
+	exec.Command("powershell", "-NoProfile", "-Command", ps).Run()
 }
 
 // fixWindowsAdminACL runs icacls to match OpenSSH Windows' expectations
