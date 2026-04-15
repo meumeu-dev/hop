@@ -13,7 +13,9 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -357,9 +359,13 @@ func Cleanup(session *PairSession) {
 	httpClient.Do(req)
 }
 
-// AddAuthorizedKey adds a validated public key to ~/.ssh/authorized_keys
+// AddAuthorizedKey adds a validated public key to ~/.ssh/authorized_keys.
+// On Windows, if the current user is a local Administrator, OpenSSH
+// Server ignores the per-user file and only reads
+// C:\ProgramData\ssh\administrators_authorized_keys — so we write to
+// BOTH locations (best-effort) and fix the strict ACLs the Windows
+// sshd demands.
 func AddAuthorizedKey(pubKey string) error {
-	// Validate the key first
 	if err := ValidateSSHPublicKey(pubKey); err != nil {
 		return err
 	}
@@ -368,22 +374,51 @@ func AddAuthorizedKey(pubKey string) error {
 	sshDir := filepath.Join(home, ".ssh")
 	os.MkdirAll(sshDir, 0700)
 
-	authKeysPath := filepath.Join(sshDir, "authorized_keys")
+	if err := appendKeyUnique(filepath.Join(sshDir, "authorized_keys"), pubKey); err != nil {
+		return err
+	}
 
-	if existing, err := os.ReadFile(authKeysPath); err == nil {
+	// Windows admin fallback — see doc comment above.
+	if runtime.GOOS == "windows" {
+		adminDir := `C:\ProgramData\ssh`
+		adminFile := filepath.Join(adminDir, "administrators_authorized_keys")
+		if _, err := os.Stat(adminDir); err == nil {
+			if err := appendKeyUnique(adminFile, pubKey); err == nil {
+				// OpenSSH Windows is strict about ACLs on this file —
+				// purge inheritance, grant only Administrators + SYSTEM.
+				fixWindowsAdminACL(adminFile)
+			}
+			// If append failed (not admin / no permission) we silently
+			// fall through — the per-user file was still updated.
+		}
+	}
+	return nil
+}
+
+func appendKeyUnique(path, pubKey string) error {
+	if existing, err := os.ReadFile(path); err == nil {
 		if strings.Contains(string(existing), pubKey) {
 			return nil
 		}
 	}
-
-	f, err := os.OpenFile(authKeysPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-
 	_, err = f.WriteString(pubKey + "\n")
 	return err
+}
+
+// fixWindowsAdminACL runs icacls to match OpenSSH Windows' expectations
+// on administrators_authorized_keys: no inheritance, only Administrators
+// and SYSTEM with full control.
+func fixWindowsAdminACL(path string) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	_ = exec.Command("icacls", path, "/inheritance:r",
+		"/grant", "Administrators:F", "/grant", "SYSTEM:F").Run()
 }
 
 // ApplyCFConfig saves the Cloudflare domain config (NOT the API key — that goes via SSH)
