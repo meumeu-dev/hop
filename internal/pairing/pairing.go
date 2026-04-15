@@ -379,21 +379,38 @@ func AddAuthorizedKey(pubKey string) error {
 	}
 
 	// Windows admin fallback — see doc comment above.
-	if runtime.GOOS == "windows" {
+	// Only attempt the admin path if the current user is in the
+	// Administrators group; otherwise administrators_authorized_keys
+	// is irrelevant (sshd will use the per-user file for a standard
+	// account) and we'd just trigger a UAC prompt the user can't answer.
+	if runtime.GOOS == "windows" && isWindowsAdmin() {
 		adminDir := `C:\ProgramData\ssh`
 		adminFile := filepath.Join(adminDir, "administrators_authorized_keys")
 		if _, err := os.Stat(adminDir); err == nil {
 			if err := appendKeyUnique(adminFile, pubKey); err == nil {
 				fixWindowsAdminACL(adminFile)
 			} else if os.IsPermission(err) {
-				// Not elevated — trigger a UAC prompt via PowerShell
-				// Start-Process -Verb RunAs, piping the key to a hidden
-				// subcommand in hop itself.
+				// Elevated child via UAC
 				tryElevateAndInstallKey(pubKey)
 			}
 		}
 	}
 	return nil
+}
+
+// isWindowsAdmin returns true if the current process's user is a member
+// of the local Administrators group (SID S-1-5-32-544). Uses `whoami
+// /groups` which is locale-independent because we match the SID, not
+// the translated group name.
+func isWindowsAdmin() bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	out, err := exec.Command("whoami", "/groups").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "S-1-5-32-544")
 }
 
 // AppendKeyUniqueExported is exported so the hidden Windows elevated
