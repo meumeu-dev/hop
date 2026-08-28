@@ -36,6 +36,7 @@ fun UnlockScreen(
     onPushToAccount: () -> Unit,
     onPullFromAccount: () -> Unit,
     onForgetAccountBackup: () -> Unit,
+    onImportQR: () -> Unit,
 ) {
     var editing by remember { mutableStateOf<UnlockTarget?>(null) }
     var showForm by remember { mutableStateOf(false) }
@@ -60,6 +61,7 @@ fun UnlockScreen(
                         Text(if (isChecking) "..." else "Actualiser")
                     }
                 }
+                TextButton(onClick = onImportQR) { Text("Scanner") }
                 IconButton(onClick = {
                     editing = null
                     showForm = true

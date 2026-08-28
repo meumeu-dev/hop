@@ -350,6 +350,12 @@ fun HopApp(
                     onPushToAccount = { pushUnlockConfig() },
                     onPullFromAccount = { pullUnlockConfig() },
                     onForgetAccountBackup = { forgetAccountBackup() },
+                    onImportQR = {
+                        onLaunchQR { content ->
+                            viewModel.onQRCodeScanned(content)
+                            unlockTargets = HopConfig(context).loadUnlockTargets().toList()
+                        }
+                    },
                     onDelete = { target ->
                         dev.meumeu.hop.unlock.UnlockVault.clear(context, target.id)
                         target.deleteKeyFile(context)

@@ -20,6 +20,7 @@ import dev.meumeu.hop.network.UpdateInfo
 import dev.meumeu.hop.network.PairData
 import dev.meumeu.hop.network.PairSession
 import dev.meumeu.hop.network.PairingClient
+import dev.meumeu.hop.unlock.UnlockTarget
 import dev.meumeu.hop.ssh.SshManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -393,8 +394,14 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- QR code scanned ---
     fun onQRCodeScanned(content: String) {
+        val incoming = content.trim()
+        // Import d'une cible de deverrouillage : QR "hop-unlock:<json UnlockTarget>"
+        if (incoming.startsWith("hop-unlock:")) {
+            importUnlockTargetFromQR(incoming.removePrefix("hop-unlock:"))
+            return
+        }
         // v3: QR contains either "hop pair <code>" (shell form) or just the 8-char code
-        var trimmed = content.trim()
+        var trimmed = incoming
         if (trimmed.startsWith("hop pair ")) {
             trimmed = trimmed.removePrefix("hop pair ").trim()
         }
@@ -405,6 +412,30 @@ class HopViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             Log.w(TAG, "Invalid QR content: '${trimmed.take(50)}'")
             _state.value = _state.value.copy(error = "QR code invalide: format non reconnu")
+        }
+    }
+
+    // Importe une cible de deverrouillage depuis un QR "hop-unlock:<json>".
+    // Evite la saisie manuelle des 6 champs (hostname, service token, cle SSH...).
+    private fun importUnlockTargetFromQR(json: String) {
+        try {
+            val parsed = Gson().fromJson(json, UnlockTarget::class.java)
+            if (parsed == null) {
+                _state.value = _state.value.copy(error = "QR unlock invalide")
+                return
+            }
+            // Toujours un id neuf : un import cree une nouvelle cible locale.
+            val target = parsed.copy(id = java.util.UUID.randomUUID().toString())
+            val err = target.validate()
+            if (err != null) {
+                _state.value = _state.value.copy(error = "QR unlock: $err")
+                return
+            }
+            hopConfig.upsertUnlockTarget(target)
+            Log.i(TAG, "Unlock target imported from QR: ${target.machineId}")
+            _state.value = _state.value.copy(message = "Cible '${target.machineId}' importee depuis le QR")
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(error = "QR unlock illisible: ${e.message}")
         }
     }
 
