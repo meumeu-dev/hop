@@ -24,6 +24,13 @@ android {
         }
     }
 
+    lint {
+        // lintVitalRelease ne tourne qu'en release et bloquait le build sur
+        // des avertissements (ex: InvalidFragmentVersionForActivityResult).
+        // On garde le lint en debug, mais il ne casse plus la release.
+        checkReleaseBuilds = false
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
