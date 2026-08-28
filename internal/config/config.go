@@ -18,8 +18,23 @@ type Config struct {
 	Aliases    map[string]string  `yaml:"aliases,omitempty"`
 	Cloudflare CloudflareConfig   `yaml:"cloudflare"`
 	WorkerURL  string             `yaml:"worker_url,omitempty"`
+	Unlock     []UnlockTarget     `yaml:"unlock,omitempty"`
 	AIEnabled   bool   `yaml:"ai_enabled,omitempty"`
 	MCPEndpoint string `yaml:"mcp_endpoint,omitempty"`
+}
+
+// UnlockTarget decrit une machine chiffree (LUKS) joignable via un tunnel
+// Cloudflare pendant son initramfs, pour saisir la passphrase a distance.
+type UnlockTarget struct {
+	Name        string `yaml:"name" json:"name"`
+	Hostname    string `yaml:"hostname" json:"hostname"`
+	TokenID     string `yaml:"token_id,omitempty" json:"token_id,omitempty"`
+	TokenSecret string `yaml:"token_secret,omitempty" json:"token_secret,omitempty"`
+	KeyFile     string `yaml:"key_file,omitempty" json:"key_file,omitempty"`
+	// Cle hote SSH attendue de dropbear (format "ssh-ed25519 AAAA...").
+	// Epinglee pour empecher qu'un tiers disposant du secret du tunnel se
+	// fasse passer pour la machine et capture la passphrase saisie.
+	HostKey string `yaml:"host_key,omitempty" json:"host_key,omitempty"`
 }
 
 type Machine struct {

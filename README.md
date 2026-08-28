@@ -12,6 +12,11 @@ Un seul binaire pour gerer toutes tes machines. **Sandboxe par defaut** — zero
 curl -sL meumeu.dev/hop/install | bash
 ```
 
+L'installeur verifie la somme SHA256 du binaire et l'installe dans
+`~/.local/bin` quand c'est possible (aucun sudo). Il ne retombe sur
+`/usr/local/bin` que si ce dossier n'existe pas. Pour choisir soi-meme :
+`HOP_INSTALL_DIR=/chemin/voulu`.
+
 **Windows** (PowerShell) :
 
 ```powershell

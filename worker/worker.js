@@ -283,6 +283,56 @@ export default {
       return jsonResponse({ ok: true }, 200, cors);
     }
 
+    // GET /account/unlock — blob chiffre cote client des machines a
+    // deverrouiller. Endpoint distinct de /account/machines pour ne pas
+    // casser le format attendu par le CLI hop. Le Worker ne peut pas le lire
+    // (chiffre avec la cle derivee du mot de passe, jamais transmise).
+    if (path === "/account/unlock" && request.method === "GET") {
+      const auth = await authenticateRequest(request, env);
+      if (!auth) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      const row = await env.HOP_UNLOCK_DB
+        .prepare("SELECT data FROM unlock_configs WHERE account_id = ?")
+        .bind(auth.accountId)
+        .first();
+      return jsonResponse({ ok: true, data: row?.data || "" }, 200, cors);
+    }
+
+    // PUT /account/unlock
+    if (path === "/account/unlock" && request.method === "PUT") {
+      const auth = await authenticateRequest(request, env);
+      if (!auth) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      const contentLength = parseInt(request.headers.get("Content-Length") || "0");
+      if (contentLength > 1048576) {
+        return jsonResponse({ error: "payload too large" }, 413, cors);
+      }
+
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
+      if (typeof body.data !== "string" || body.data.length > 1048576) {
+        return jsonResponse({ error: "invalid data" }, 400, cors);
+      }
+
+      await env.HOP_UNLOCK_DB
+        .prepare("INSERT OR REPLACE INTO unlock_configs (account_id, data, updated_at) VALUES (?, ?, ?)")
+        .bind(auth.accountId, body.data, Date.now())
+        .run();
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    // DELETE /account/unlock — retire la config synchronisee du cloud
+    if (path === "/account/unlock" && request.method === "DELETE") {
+      const auth = await authenticateRequest(request, env);
+      if (!auth) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      await env.HOP_UNLOCK_DB
+        .prepare("DELETE FROM unlock_configs WHERE account_id = ?")
+        .bind(auth.accountId)
+        .run();
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
     // POST /auth/logout
     if (path === "/auth/logout" && request.method === "POST") {
       const token = extractBearerToken(request);
@@ -317,6 +367,10 @@ export default {
       // Remove account + machines
       await env.HOP_KV.delete(`account:${auth.accountId}`);
       await env.HOP_KV.delete(`machines:${auth.accountId}`);
+      await env.HOP_UNLOCK_DB
+        .prepare("DELETE FROM unlock_configs WHERE account_id = ?")
+        .bind(auth.accountId)
+        .run();
 
       return jsonResponse({ ok: true }, 200, cors);
     }
@@ -417,6 +471,105 @@ export default {
       return jsonResponse({ data: stored }, 200, cors);
     }
 
+    // ==================== UNLOCK (push-approval LUKS unlock) ====================
+
+    // POST /unlock/trigger — appelé par l'initramfs d'une machine LUKS au boot
+    // Body: { machine_id, nonce, timestamp, signature }
+    // signature = HMAC-SHA256(secret_machine, `${machine_id}:${nonce}:${timestamp}`)
+    if (path === "/unlock/trigger" && request.method === "POST") {
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
+      const { machine_id, nonce, timestamp, signature } = body;
+      if (!machine_id || !nonce || !timestamp || !signature) {
+        return jsonResponse({ error: "missing fields" }, 400, cors);
+      }
+
+      // Validation stricte des formats AVANT tout usage : machine_id sert
+      // d'index dans env[] et de composant de cle KV, nonce de cle KV.
+      if (!isValidMachineId(machine_id) || !isValidNonce(nonce) ||
+          typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+        return jsonResponse({ error: "invalid fields" }, 400, cors);
+      }
+
+      // Rate limit par IP (et pas par machine_id) AVANT verification : sinon
+      // n'importe qui peut envoyer 10 requetes bidons avec machine_id=megahost
+      // et bloquer le vrai trigger pendant 15 min.
+      const trigIp = request.headers.get("CF-Connecting-IP") || "unknown";
+      const rlKey = `ratelimit:unlock-trigger:${trigIp}`;
+      const rlCount = parseInt(await env.HOP_KV.get(rlKey) || "0");
+      if (rlCount >= 30) return jsonResponse({ error: "rate limit" }, 429, cors);
+      await env.HOP_KV.put(rlKey, String(rlCount + 1), { expirationTtl: 900 });
+
+      // Fraicheur du timestamp (anti-replay, fenetre 2 min)
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - timestamp) > 120) {
+        return jsonResponse({ error: "stale timestamp" }, 400, cors);
+      }
+
+      // Reponse identique si la machine est inconnue ou la signature fausse :
+      // evite de transformer l'endpoint en oracle revelant quelles machines
+      // (donc quels secrets env) existent.
+      const secret = env[`UNLOCK_HMAC_SECRET_${machine_id.toUpperCase()}`];
+      const valid = secret
+        ? await verifyHmac(secret, `${machine_id}:${nonce}:${timestamp}`, signature)
+        : false;
+      if (!valid) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      // Nonce a usage unique — verifie APRES la signature, pour qu'un tiers ne
+      // puisse pas polluer l'espace de cles KV sans connaitre le secret.
+      const nonceKey = `unlock:nonce:${machine_id}:${nonce}`;
+      if (await env.HOP_KV.get(nonceKey)) {
+        return jsonResponse({ error: "replayed nonce" }, 400, cors);
+      }
+      await env.HOP_KV.put(nonceKey, "1", { expirationTtl: 300 });
+
+      // TTL 24h — megahost peut rester en attente longtemps.
+      const pending = {
+        machine_id,
+        nonce,
+        status: "pending",
+        created: now,
+      };
+      await env.HOP_KV.put(`unlock:pending:${machine_id}`, JSON.stringify(pending), { expirationTtl: 86400 });
+
+      // La notification ntfy est envoyee directement par l'initramfs de la
+      // machine (quota ntfy.sh par IP source : les IP partagees des Workers
+      // Cloudflare sont deja saturees, HTTP 429 systematique).
+
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
+    // GET /unlock/status?machine_id= — l'app demande si une machine attend un
+    // unlock (authentifie par la session de compte hop existante). Pas de
+    // push : c'est l'app qui interroge quand l'utilisateur l'ouvre.
+    if (path === "/unlock/status" && request.method === "GET") {
+      const account = await authenticateRequest(request, env);
+      if (!account) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      const machineId = url.searchParams.get("machine_id");
+      if (!isValidMachineId(machineId)) return jsonResponse({ error: "invalid machine_id" }, 400, cors);
+
+      const pendingRaw = await env.HOP_KV.get(`unlock:pending:${machineId}`);
+      if (!pendingRaw) return jsonResponse({ pending: false }, 200, cors);
+      const pending = JSON.parse(pendingRaw);
+      return jsonResponse({ pending: true, since: pending.created }, 200, cors);
+    }
+
+    // POST /unlock/clear — l'app signale que la machine a ete deverrouillee
+    // (efface l'etat d'attente). Purement informatif, aucun effet securite.
+    if (path === "/unlock/clear" && request.method === "POST") {
+      const account = await authenticateRequest(request, env);
+      if (!account) return jsonResponse({ error: "unauthorized" }, 401, cors);
+
+      let body;
+      try { body = await request.json(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
+      const { machine_id } = body;
+      if (!isValidMachineId(machine_id)) return jsonResponse({ error: "invalid machine_id" }, 400, cors);
+
+      await env.HOP_KV.delete(`unlock:pending:${machine_id}`);
+      return jsonResponse({ ok: true }, 200, cors);
+    }
+
     if (path === "/health") {
       return jsonResponse({ status: "ok", service: "hop-pair" }, 200, cors);
     }
@@ -468,6 +621,37 @@ async function addAccountSession(env, accountId, sessionHash) {
   }
 
   await env.HOP_KV.put(key, JSON.stringify(sessions));
+}
+
+// ==================== UNLOCK HELPERS ====================
+
+// machine_id sert d'index dans env[] et de composant de cle KV : on le borne
+// strictement pour eviter toute injection de cle ou sondage de variables.
+function isValidMachineId(s) {
+  return typeof s === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(s);
+}
+
+function isValidNonce(s) {
+  return typeof s === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(s);
+}
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+async function verifyHmac(secretHex, message, signatureHex) {
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw", hexToBytes(secretHex), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]
+    );
+    return await crypto.subtle.verify("HMAC", key, hexToBytes(signatureHex), new TextEncoder().encode(message));
+  } catch {
+    return false;
+  }
 }
 
 async function sha256(message) {

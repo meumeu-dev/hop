@@ -1,0 +1,43 @@
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+[ -x /usr/local/bin/hop ] || exit 0
+[ -d /etc/hop/unlock ] || exit 0
+
+# Garde-fou : `hop update` peut remplacer le binaire par une release qui n'a
+# pas encore la commande `unlock` (elle n'est pas upstream). Sans ce test on
+# embarquerait un hop incapable de notifier, et on ne s'en apercevrait qu'au
+# prochain boot bloque. On echoue bruyamment plutot que silencieusement.
+# Attention : `hop unlock notify --help` sort en code 0 MEME sans la commande,
+# car hop accepte des arguments arbitraires a la racine (`hop <service>`) et
+# retombe sur l'aide generale. On teste donc la presence de la commande dans
+# la liste "Available Commands", seul signal fiable.
+if ! /usr/local/bin/hop --help 2>/dev/null | grep -qE "^[[:space:]]+unlock[[:space:]]"; then
+    echo "hop-unlock: ATTENTION — /usr/local/bin/hop n'a pas la commande 'unlock notify'." >&2
+    echo "hop-unlock: la notification de deverrouillage NE SERA PAS embarquee." >&2
+    echo "hop-unlock: reinstalle un hop compile depuis la branche avec cmd/unlock.go." >&2
+    exit 0
+fi
+
+# hop lui-meme dans l'initramfs : c'est lui qui previent que la machine
+# attend sa passphrase (`hop unlock notify`).
+copy_exec /usr/local/bin/hop /bin/hop
+
+mkdir -p "$DESTDIR/etc/hop/unlock"
+for f in machine worker.url ntfy.url hmac.key; do
+    [ -f "/etc/hop/unlock/$f" ] && cp "/etc/hop/unlock/$f" "$DESTDIR/etc/hop/unlock/$f"
+done
+[ -f "$DESTDIR/etc/hop/unlock/hmac.key" ] && chmod 600 "$DESTDIR/etc/hop/unlock/hmac.key"
+
+# Bundle de certificats CA : l'initramfs n'en embarque aucun par defaut, donc
+# tout client TLS Go echoue en "x509: certificate signed by unknown authority".
+if [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    mkdir -p "$DESTDIR/etc/ssl/certs"
+    cp /etc/ssl/certs/ca-certificates.crt "$DESTDIR/etc/ssl/certs/ca-certificates.crt"
+fi
+
+exit 0

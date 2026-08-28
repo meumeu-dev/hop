@@ -5,3 +5,23 @@ compatibility_date = "2024-01-01"
 [[kv_namespaces]]
 binding = "HOP_KV"
 id = "536adf017eac422a97a74e8ea1a7dcbb"
+
+# Config d'unlock synchronisee : D1 plutot que KV, car KV est a coherence
+# eventuelle (~60s de propagation) — sauvegarder sur un telephone puis
+# importer aussitot sur un autre pouvait rendre l'ancienne version. D1 est
+# fortement coherent : ce qu'on vient d'ecrire est lu immediatement.
+[[d1_databases]]
+binding = "HOP_UNLOCK_DB"
+database_name = "hop-unlock"
+database_id = "5ff13326-a1ba-4ee3-9d28-990cb4299380"
+
+[[migrations]]
+tag = "v2"
+deleted_classes = ["UnlockContainer"]
+
+# Pas de Container CF (necessite Workers Paid) ni de push FCM : le telephone
+# parle directement CF Access + SSH, et interroge /unlock/status a la demande
+# quand l'utilisateur ouvre l'app. Tout reste sur le Workers Free.
+
+# Secret a definir via `wrangler secret put` (jamais dans ce fichier) :
+#   UNLOCK_HMAC_SECRET_MEGAHOST   — cle HMAC partagee avec l'initramfs de megahost

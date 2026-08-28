@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Déverrouillage LUKS</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --fg: #e6edf3; --muted: #8b949e; --accent: #2f81f7;
+    --ok: #3fb950; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 50% -10%, #14203a 0%, var(--bg) 60%);
+    color: var(--fg); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 400px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 14px; padding: 28px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  }
+  .lock { font-size: 34px; text-align: center; }
+  h1 { font-size: 18px; margin: 10px 0 2px; text-align: center; font-weight: 600; }
+  .machine { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .row { position: relative; }
+  input[type=password], input[type=text] {
+    width: 100%; padding: 12px 44px 12px 12px; font-size: 15px;
+    background: #0d1117; border: 1px solid var(--border); border-radius: 9px;
+    color: var(--fg); outline: none; font-family: ui-monospace, monospace;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,129,247,.25); }
+  .toggle {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 6px;
+  }
+  button.primary {
+    width: 100%; margin-top: 16px; padding: 12px; font-size: 15px; font-weight: 600;
+    background: var(--accent); color: #fff; border: 0; border-radius: 9px; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 13px; text-align: center; min-height: 20px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .status.info { color: var(--muted); }
+  .note { margin-top: 18px; font-size: 11.5px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--muted);
+    border-top-color: transparent; border-radius: 50%; animation: r .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <form class="card" id="form" autocomplete="off">
+    <div class="lock">🔒</div>
+    <h1>Déverrouillage du disque</h1>
+    <div class="machine" id="machine">machine chiffrée</div>
+
+    <label for="pass">Passphrase LUKS</label>
+    <div class="row">
+      <input id="pass" type="password" autocomplete="off" autofocus spellcheck="false" enterkeyhint="go">
+      <button type="button" class="toggle" id="toggle" aria-label="Afficher">voir</button>
+    </div>
+
+    <button type="submit" class="primary" id="submit">Déverrouiller</button>
+    <div class="status info" id="status">Chiffrement de bout en bout vers la machine.</div>
+
+    <div class="note">
+      La passphrase est chiffrée dans ton navigateur (RSA-OAEP) avec une clé
+      éphémère de la machine. Cloudflare ne voit qu'un blob chiffré.
+    </div>
+  </form>
+
+<script>
+(function () {
+  "use strict";
+  var pubKey = null;
+  var form = document.getElementById("form");
+  var pass = document.getElementById("pass");
+  var submit = document.getElementById("submit");
+  var status = document.getElementById("status");
+  var toggle = document.getElementById("toggle");
+
+  function setStatus(msg, kind, spin) {
+    status.className = "status " + (kind || "info");
+    status.innerHTML = (spin ? '<span class="spin"></span>' : "") + msg;
+  }
+
+  function b64ToBuf(b64) {
+    var bin = atob(b64), buf = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf;
+  }
+  function bufToB64(buf) {
+    var bin = "", bytes = new Uint8Array(buf);
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+
+  toggle.addEventListener("click", function () {
+    var show = pass.type === "password";
+    pass.type = show ? "text" : "password";
+    toggle.textContent = show ? "masquer" : "voir";
+    pass.focus();
+  });
+
+  // Recupere la cle publique ephemere de la machine et l'importe pour WebCrypto.
+  function loadKey() {
+    setStatus("Préparation…", "info", true);
+    submit.disabled = true;
+    return fetch("pubkey", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("pubkey " + r.status); return r.json(); })
+      .then(function (j) {
+        return crypto.subtle.importKey(
+          "spki", b64ToBuf(j.pubkey),
+          { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+      })
+      .then(function (k) {
+        pubKey = k;
+        submit.disabled = false;
+        setStatus("Prêt.", "info");
+      })
+      .catch(function (e) {
+        setStatus("Impossible de contacter la machine. Réessaie. (" + e.message + ")", "err");
+      });
+  }
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    if (!pubKey) { loadKey(); return; }
+    var value = pass.value;
+    if (!value) { setStatus("Saisis la passphrase.", "err"); pass.focus(); return; }
+
+    submit.disabled = true;
+    setStatus("Déverrouillage en cours…", "info", true);
+
+    var data = new TextEncoder().encode(value);
+    crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, data)
+      .then(function (ct) {
+        return fetch("unlock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ blob: bufToB64(ct) })
+        });
+      })
+      .then(function (r) { return r.json().then(function (j) { return { r: r, j: j }; }); })
+      .then(function (res) {
+        if (res.j.ok) {
+          setStatus("✓ " + (res.j.msg || "Disque déverrouillé, la machine démarre."), "ok");
+          pass.value = "";
+          pass.disabled = true; toggle.disabled = true;
+        } else {
+          setStatus("✗ " + (res.j.error || "Échec."), "err");
+          submit.disabled = false;
+          pass.select();
+          // La cle publique peut avoir expire (reboot) : on la recharge.
+          if (res.r.status === 400) loadKey();
+        }
+      })
+      .catch(function (e) {
+        setStatus("Erreur réseau : " + e.message, "err");
+        submit.disabled = false;
+      });
+  });
+
+  if (!window.crypto || !crypto.subtle) {
+    setStatus("Ce navigateur ne supporte pas WebCrypto (HTTPS requis).", "err");
+    submit.disabled = true;
+  } else {
+    loadKey();
+  }
+})();
+</script>
+</body>
+</html>

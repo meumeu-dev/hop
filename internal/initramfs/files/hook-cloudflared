@@ -1,0 +1,23 @@
+#!/bin/sh
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+# Installe par `hop unlock setup`. Embarque cloudflared et les credentials du
+# tunnel pour que la machine soit joignable pendant son initramfs.
+
+CFD=$(command -v cloudflared 2>/dev/null || echo /usr/local/bin/cloudflared)
+[ -x "$CFD" ] || exit 0
+[ -f /etc/hop/unlock/tunnel-credentials.json ] || exit 0
+[ -f /etc/hop/unlock/tunnel.id ] || exit 0
+
+copy_exec "$CFD" /bin/cloudflared
+
+mkdir -p "$DESTDIR/etc/hop/unlock"
+cp /etc/hop/unlock/tunnel-credentials.json "$DESTDIR/etc/hop/unlock/tunnel-credentials.json"
+cp /etc/hop/unlock/tunnel.id "$DESTDIR/etc/hop/unlock/tunnel.id"
+chmod 600 "$DESTDIR/etc/hop/unlock/tunnel-credentials.json"
+
+exit 0

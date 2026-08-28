@@ -216,46 +216,51 @@ type createTokenResponse struct {
 	Errors  []cfError    `json:"errors"`
 }
 
-// findServiceToken returns the client_id of an existing token with the given name, or "".
-// Note: the secret cannot be retrieved after creation — we only check if the name exists.
-func (c *cfClient) findServiceToken(name string) (string, error) {
+// findServiceToken returns (uuid, client_id) of an existing token with the
+// given name, or ("", ""). Note: the secret cannot be retrieved after creation.
+//
+// ATTENTION : deux identifiants coexistent et ne sont PAS interchangeables.
+// `client_id` (suffixe .access) sert au client cloudflared ; `id` (UUID) est
+// le seul accepte par l'API dans une regle de policy `service_token`.
+func (c *cfClient) findServiceToken(name string) (string, string, error) {
 	url := fmt.Sprintf("%s/accounts/%s/access/service_tokens", cfAPIBase, c.env.AccountID)
 	data, _, err := c.do("GET", url, nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var resp listTokensResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return "", fmt.Errorf("parse tokens: %w", err)
+		return "", "", fmt.Errorf("parse tokens: %w", err)
 	}
 	for _, t := range resp.Result {
 		if t.Name == name {
-			return t.ClientID, nil
+			return t.ID, t.ClientID, nil
 		}
 	}
-	return "", nil
+	return "", "", nil
 }
 
-// createServiceToken creates a new service token and returns (clientID, clientSecret).
-func (c *cfClient) createServiceToken(name string) (string, string, error) {
+// createServiceToken creates a new service token and returns
+// (uuid, clientID, clientSecret).
+func (c *cfClient) createServiceToken(name string) (string, string, string, error) {
 	url := fmt.Sprintf("%s/accounts/%s/access/service_tokens", cfAPIBase, c.env.AccountID)
 	payload := map[string]string{"name": name}
 	data, _, err := c.do("POST", url, payload)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	var resp createTokenResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return "", "", fmt.Errorf("parse create token: %w", err)
+		return "", "", "", fmt.Errorf("parse create token: %w", err)
 	}
 	if !resp.Success {
 		msgs := make([]string, len(resp.Errors))
 		for i, e := range resp.Errors {
 			msgs[i] = e.Message
 		}
-		return "", "", fmt.Errorf("CF API: %s", strings.Join(msgs, "; "))
+		return "", "", "", fmt.Errorf("CF API: %s", strings.Join(msgs, "; "))
 	}
-	return resp.Result.ClientID, resp.Result.ClientSecret, nil
+	return resp.Result.ID, resp.Result.ClientID, resp.Result.ClientSecret, nil
 }
 
 // ── Access Policy ─────────────────────────────────────────────────────────────
@@ -295,7 +300,9 @@ func (c *cfClient) findPolicy(appID, name string) (bool, error) {
 	return false, nil
 }
 
-func (c *cfClient) createPolicy(appID, policyName, tokenClientID string) error {
+// tokenUUID DOIT etre l'`id` du service token (UUID), pas son `client_id` :
+// l'API rejette ce dernier avec "invalid 'include' configuration".
+func (c *cfClient) createPolicy(appID, policyName, tokenUUID string) error {
 	url := fmt.Sprintf("%s/accounts/%s/access/apps/%s/policies", cfAPIBase, c.env.AccountID, appID)
 	payload := map[string]interface{}{
 		"name":       policyName,
@@ -303,7 +310,7 @@ func (c *cfClient) createPolicy(appID, policyName, tokenClientID string) error {
 		"include": []map[string]interface{}{
 			{
 				"service_token": map[string]string{
-					"token_id": tokenClientID,
+					"token_id": tokenUUID,
 				},
 			},
 		},
@@ -427,6 +434,41 @@ func FindTunnel(env *CFEnv, name string) (*TunnelInfo, error) {
 		}
 	}
 	return nil, nil
+}
+
+// ConfigureIngress sets the tunnel's ingress rules via the API (config_src =
+// cloudflare), so no local config.yml is needed — indispensable in an
+// initramfs where cloudflared runs from a minimal environment.
+func ConfigureIngress(env *CFEnv, tunnelID, hostname, service string) error {
+	cl := newClient(env)
+	url := fmt.Sprintf("%s/accounts/%s/cfd_tunnel/%s/configurations", cfAPIBase, env.AccountID, tunnelID)
+	payload := map[string]interface{}{
+		"config": map[string]interface{}{
+			"ingress": []map[string]interface{}{
+				{"hostname": hostname, "service": service},
+				{"service": "http_status:404"},
+			},
+		},
+	}
+	data, _, err := cl.do("PUT", url, payload)
+	if err != nil {
+		return fmt.Errorf("configuration ingress: %w", err)
+	}
+	var resp struct {
+		Success bool      `json:"success"`
+		Errors  []cfError `json:"errors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse ingress: %w", err)
+	}
+	if !resp.Success {
+		msgs := make([]string, len(resp.Errors))
+		for i, e := range resp.Errors {
+			msgs[i] = e.Message
+		}
+		return fmt.Errorf("CF API ingress: %s", strings.Join(msgs, "; "))
+	}
+	return nil
 }
 
 // GetZoneID retrieves the zone ID for a given domain.
@@ -555,12 +597,13 @@ func Setup(cfg *config.Config, tunnelName string) (*SetupResult, error) {
 
 	// ── Step B: Service token ────────────────────────────────────────────────
 	fmt.Printf("  → Recherche du service token '%s'...\n", tokenName)
-	existingClientID, err := cl.findServiceToken(tokenName)
+	existingUUID, existingClientID, err := cl.findServiceToken(tokenName)
 	if err != nil {
 		return nil, fmt.Errorf("recherche token: %w", err)
 	}
 
 	result := &SetupResult{}
+	var tokenUUID string
 
 	if existingClientID != "" {
 		fmt.Printf("  → Service token existant (client_id: %s)\n", existingClientID)
@@ -568,15 +611,17 @@ func Setup(cfg *config.Config, tunnelName string) (*SetupResult, error) {
 		fmt.Println("    Si le secret n'est plus disponible, supprimez le token dans le dashboard CF et relancez.")
 		result.TokenID = existingClientID
 		result.Reused = true
+		tokenUUID = existingUUID
 	} else {
 		fmt.Printf("  → Creation du service token '%s'...\n", tokenName)
-		clientID, clientSecret, err := cl.createServiceToken(tokenName)
+		uuid, clientID, clientSecret, err := cl.createServiceToken(tokenName)
 		if err != nil {
 			return nil, fmt.Errorf("creation token: %w", err)
 		}
 		fmt.Printf("  → Service token cree (client_id: %s)\n", clientID)
 		result.TokenID = clientID
 		result.TokenSecret = clientSecret
+		tokenUUID = uuid
 	}
 
 	// ── Step C: Policy ───────────────────────────────────────────────────────
@@ -589,7 +634,7 @@ func Setup(cfg *config.Config, tunnelName string) (*SetupResult, error) {
 		fmt.Println("  → Policy existante, rien a faire.")
 	} else {
 		fmt.Printf("  → Creation de la policy (service token autorise)...\n")
-		if err := cl.createPolicy(appID, policyName, result.TokenID); err != nil {
+		if err := cl.createPolicy(appID, policyName, tokenUUID); err != nil {
 			return nil, fmt.Errorf("creation policy: %w", err)
 		}
 		fmt.Println("  → Policy creee.")

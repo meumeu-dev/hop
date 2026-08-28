@@ -5,6 +5,7 @@ import android.provider.Settings
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import dev.meumeu.hop.network.AccountSession
+import dev.meumeu.hop.unlock.UnlockTarget
 import java.io.File
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -125,5 +126,39 @@ class HopConfig(private val context: Context) {
 
     fun deleteSession() {
         sessionFile.delete()
+    }
+
+    // --- Cibles de deverrouillage LUKS (saisies par l'utilisateur) ---
+    // Contiennent des secrets (service token CF Access + cle privee SSH) :
+    // stockees chiffrees avec la meme cle locale que la session.
+
+    private val unlockTargetsFile get() = File(context.filesDir, "unlock_targets.enc")
+
+    fun loadUnlockTargets(): MutableList<UnlockTarget> {
+        if (!unlockTargetsFile.exists()) return mutableListOf()
+        return try {
+            val decrypted = localDecrypt(unlockTargetsFile.readText())
+            val type = object : TypeToken<MutableList<UnlockTarget>>() {}.type
+            gson.fromJson<MutableList<UnlockTarget>>(String(decrypted, Charsets.UTF_8), type)
+                ?: mutableListOf()
+        } catch (_: Exception) {
+            mutableListOf()
+        }
+    }
+
+    fun saveUnlockTargets(targets: List<UnlockTarget>) {
+        val json = gson.toJson(targets)
+        unlockTargetsFile.writeText(localEncrypt(json.toByteArray(Charsets.UTF_8)))
+    }
+
+    fun upsertUnlockTarget(target: UnlockTarget) {
+        val targets = loadUnlockTargets()
+        val idx = targets.indexOfFirst { it.id == target.id }
+        if (idx >= 0) targets[idx] = target else targets.add(target)
+        saveUnlockTargets(targets)
+    }
+
+    fun removeUnlockTarget(id: String) {
+        saveUnlockTargets(loadUnlockTargets().filterNot { it.id == id })
     }
 }

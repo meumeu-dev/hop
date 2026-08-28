@@ -8,3 +8,7 @@
 .externalNativeBuild
 .cxx
 gradle/wrapper/gradle-wrapper.jar
+
+# Note : plus aucun secret d'unlock dans le code source. Le hostname, le
+# service token et la cle SSH sont saisis par l'utilisateur dans l'app et
+# stockes chiffres sur son telephone (unlock_targets.enc).

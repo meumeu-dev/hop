@@ -1,0 +1,43 @@
+#!/bin/sh
+PREREQ="cloudflared"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+# Previent (ntfy + Worker) que cette machine attend sa passphrase LUKS.
+# Best-effort : ne doit jamais bloquer ni ralentir le boot, et l'unlock reste
+# possible independamment (ssh / hop unlock) meme si ceci echoue.
+
+[ -x /bin/hop ] || exit 0
+
+LOG=/run/initramfs/hop-unlock.log
+mkdir -p /run/initramfs
+exec >>$LOG 2>&1
+echo "=== hop unlock notify $(date) ==="
+
+waited=0
+net_ok=0
+while [ $waited -lt 60 ]; do
+    for conf in /run/net-*.conf /run/net6-*.conf; do
+        [ -e "$conf" ] && { net_ok=1; break 2; }
+    done
+    sleep 1
+    waited=$((waited+1))
+done
+echo "reseau pret apres ${waited}s (net_ok=$net_ok)"
+[ $net_ok -eq 1 ] || { echo "pas de reseau apres 60s, abandon"; exit 0; }
+
+HOME=/root /bin/hop unlock notify
+
+# Serveur web local de deverrouillage (page WebCrypto servie via le tunnel).
+# Il bind 127.0.0.1 : le script reseau minimal ne monte jamais lo, sans quoi le
+# bind echoue en "cannot assign requested address". On lance en tache de fond
+# pour ne pas bloquer le boot ; il mourra de lui-meme au pivot_root.
+if [ -x /usr/bin/cryptroot-unlock ]; then
+    ip link set dev lo up 2>&1
+    HOME=/root /bin/hop unlock web --addr 127.0.0.1:8088 &
+    echo "serveur web d'unlock lance (pid $!)"
+else
+    echo "cryptroot-unlock absent, serveur web d'unlock non lance"
+fi
+
+echo "=== fin $(date) ==="

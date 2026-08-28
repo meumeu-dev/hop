@@ -259,6 +259,18 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	safeCfg.Machines = safeMachines
+	// Strip unlock credentials (service token + SSH key path) — only the
+	// machine name and tunnel hostname are safe to expose.
+	if len(cfg.Unlock) > 0 {
+		safeUnlock := make([]config.UnlockTarget, 0, len(cfg.Unlock))
+		for _, u := range cfg.Unlock {
+			safeUnlock = append(safeUnlock, config.UnlockTarget{
+				Name:     u.Name,
+				Hostname: u.Hostname,
+			})
+		}
+		safeCfg.Unlock = safeUnlock
+	}
 	configMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")

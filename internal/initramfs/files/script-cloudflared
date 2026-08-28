@@ -1,0 +1,42 @@
+#!/bin/sh
+PREREQ="dropbear"
+prereqs() { echo "$PREREQ"; }
+case "$1" in prereqs) prereqs; exit 0;; esac
+
+# Installe par `hop unlock setup`. Monte le tunnel Cloudflare pendant
+# l'initramfs pour que la machine soit joignable (SSH -> dropbear) et qu'on
+# puisse saisir la passphrase LUKS a distance.
+
+[ -x /bin/cloudflared ] || exit 0
+[ -f /etc/hop/unlock/tunnel-credentials.json ] || exit 0
+[ -f /etc/hop/unlock/tunnel.id ] || exit 0
+
+LOG=/run/initramfs/cloudflared.log
+mkdir -p /run/initramfs
+exec >>$LOG 2>&1
+echo "=== cloudflared (hop unlock) $(date) ==="
+
+# Attente passive du reseau (monte par dropbear via configure_networking()).
+waited=0
+net_ok=0
+while [ $waited -lt 60 ]; do
+    for conf in /run/net-*.conf /run/net6-*.conf; do
+        [ -e "$conf" ] && { net_ok=1; break 2; }
+    done
+    sleep 1
+    waited=$((waited+1))
+done
+echo "reseau pret apres ${waited}s (net_ok=$net_ok)"
+[ $net_ok -eq 1 ] || { echo "pas de reseau apres 60s, abandon"; exit 0; }
+
+# Le script reseau minimal de l'initramfs ne monte JAMAIS lo, or cloudflared
+# bind son serveur de metrics sur 127.0.0.1 au demarrage et meurt aussitot
+# sans lo ("bind: cannot assign requested address"), sans erreur visible.
+ip link set dev lo up 2>&1
+
+TUNNEL_ID=$(cat /etc/hop/unlock/tunnel.id)
+HOME=/root /bin/cloudflared tunnel --no-autoupdate run \
+    --credentials-file /etc/hop/unlock/tunnel-credentials.json \
+    "$TUNNEL_ID" &
+echo $! >/run/cloudflared.pid
+echo "cloudflared lance (tunnel $TUNNEL_ID), pid $(cat /run/cloudflared.pid)"

@@ -220,6 +220,48 @@ class AccountClient(private val workerUrl: String = PairingClient.DEFAULT_WORKER
         }
     }
 
+    /**
+     * Envoie la config des machines a deverrouiller, deja chiffree cote client
+     * (le Worker ne stocke qu'un blob opaque, il ne peut pas la lire).
+     */
+    fun pushUnlockConfig(token: String, encryptedData: String) {
+        val body = gson.toJson(mapOf("data" to encryptedData)).toRequestBody(jsonType)
+        val request = Request.Builder()
+            .url("$workerUrl/account/unlock")
+            .put(body)
+            .header("Authorization", "Bearer $token")
+            .build()
+        val response = client.newCall(request).execute()
+        when (response.code) {
+            401 -> throw Exception("Session expiree, reconnectez-vous")
+            200 -> { /* ok */ }
+            else -> throw Exception("Erreur serveur: HTTP ${response.code}")
+        }
+    }
+
+    /** Recupere le blob chiffre des machines a deverrouiller ("" si aucun). */
+    fun pullUnlockConfig(token: String): String {
+        val request = Request.Builder()
+            .url("$workerUrl/account/unlock")
+            .get()
+            .header("Authorization", "Bearer $token")
+            .build()
+        val response = client.newCall(request).execute()
+        if (response.code == 401) throw Exception("Session expiree, reconnectez-vous")
+        val result = gson.fromJson(response.body!!.string(), Map::class.java)
+        return result["data"] as? String ?: ""
+    }
+
+    /** Supprime la config synchronisee du cloud. */
+    fun deleteUnlockConfig(token: String) {
+        val request = Request.Builder()
+            .url("$workerUrl/account/unlock")
+            .delete()
+            .header("Authorization", "Bearer $token")
+            .build()
+        client.newCall(request).execute().close()
+    }
+
     fun pullMachines(token: String): String {
         val request = Request.Builder()
             .url("$workerUrl/account/machines")
