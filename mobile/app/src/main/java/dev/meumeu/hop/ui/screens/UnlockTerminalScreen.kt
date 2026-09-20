@@ -1,10 +1,8 @@
 package dev.meumeu.hop.ui.screens
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fingerprint
@@ -15,27 +13,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import dev.meumeu.hop.ssh.UnlockSshSession
 import dev.meumeu.hop.unlock.BiometricGate
 import dev.meumeu.hop.unlock.UnlockTarget
 import dev.meumeu.hop.unlock.UnlockVault
-import kotlinx.coroutines.Dispatchers
+import dev.meumeu.hop.unlock.UnlockWebSession
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * Terminal brut vers dropbear (prompt cryptroot-unlock), a travers
- * CfAccessTunnel + UnlockSshSession. Buffer texte simple pour le MVP (pas de
- * rendu ANSI).
+ * Deverrouillage via le serveur WEB d'unlock de la machine : la passphrase est
+ * chiffree en RSA-OAEP-256 dans le telephone et envoyee en POST /unlock a
+ * travers le tunnel Cloudflare (auth service token). Pas de terminal SSH, pas
+ * de flux interactif : on envoie, la machine dechiffre, et on affiche la
+ * reponse.
  *
  * Aucune passphrase n'est stockee : le texte saisi part directement dans le
- * flux SSH puis le champ est vide, comme un vrai terminal.
+ * chiffrement puis le champ est vide.
  */
 @Composable
 fun UnlockTerminalScreen(
@@ -46,88 +43,57 @@ fun UnlockTerminalScreen(
     val machineId = target.machineId
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
 
-    var output by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Connexion...") }
-    var session by remember { mutableStateOf<UnlockSshSession?>(null) }
-    var showPassphrase by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Prêt à déverrouiller") }
+    var busy by remember { mutableStateOf(false) }
     var unlocked by remember { mutableStateOf(false) }
+    var showPassphrase by remember { mutableStateOf(false) }
     // Retenue en memoire uniquement, le temps de proposer l'enregistrement
     // apres un unlock reussi. Effacee des que la question est tranchee.
     var lastTypedPassphrase by remember { mutableStateOf<String?>(null) }
     var offerSave by remember { mutableStateOf(false) }
     var saveMessage by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(target.id) {
-        withContext(Dispatchers.IO) {
-            val keyFile = target.writePrivateKeyFile(context)
-            val s = UnlockSshSession(
-                hostname = target.hostname,
-                serviceTokenId = target.serviceTokenId,
-                serviceTokenSecret = target.serviceTokenSecret,
-                privateKeyFile = keyFile,
-                expectedHostKey = target.hostKey,
-            )
-            s.onOutput = { bytes ->
-                // Buffer borne : une session d'unlock tient en quelques
-                // centaines d'octets, mais on evite une croissance illimitee
-                // (et la concatenation quadratique qui va avec) si la machine
-                // se met a cracher des logs.
-                output = (output + String(bytes, Charsets.UTF_8)).takeLast(8000)
-                if (output.contains("set up successfully")) {
-                    unlocked = true
-                    status = "Déverrouillé ✓"
-                    // Proposer l'enregistrement seulement si la passphrase
-                    // vient d'etre tapee a la main et qu'aucun coffre n'existe.
-                    if (lastTypedPassphrase != null &&
-                        !UnlockVault.hasPassphrase(context, target.id) &&
-                        BiometricGate.isAvailable(context)
-                    ) {
-                        offerSave = true
-                    }
-                }
-            }
-            s.onError = { e -> status = "Erreur: ${e.message ?: e.javaClass.simpleName}" }
-            s.onClosed = {
-                if (unlocked) {
-                    status = "Déverrouillé ✓ — session fermée"
-                    onUnlocked()
+    suspend fun doUnlock(passphrase: String) {
+        if (busy) return
+        busy = true
+        status = "Déverrouillage en cours…"
+        val session = UnlockWebSession(
+            hostname = target.hostname,
+            serviceTokenId = target.serviceTokenId,
+            serviceTokenSecret = target.serviceTokenSecret,
+        )
+        try {
+            val result = session.unlock(passphrase)
+            if (result.ok) {
+                unlocked = true
+                status = "✓ ${result.msg}"
+                // Proposer l'enregistrement seulement si la passphrase
+                // vient d'etre tapee a la main et qu'aucun coffre n'existe.
+                if (lastTypedPassphrase != null &&
+                    !UnlockVault.hasPassphrase(context, target.id) &&
+                    BiometricGate.isAvailable(context)
+                ) {
+                    offerSave = true
                 } else {
-                    status = "Session terminée"
+                    onUnlocked()
                 }
+            } else {
+                status = "✗ ${result.msg}"
             }
-            try {
-                s.connect()
-                status = "Connecté"
-                session = s
-            } catch (e: Exception) {
-                status = "Connexion échouée: ${e.message}"
-            }
+        } catch (e: Exception) {
+            status = "Erreur : ${e.message ?: e.javaClass.simpleName}"
+        } finally {
+            busy = false
         }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            session?.disconnect()
-            // La cle privee est ecrite en clair sur le disque pour sshj :
-            // on l'efface des la fin de la session pour reduire la fenetre
-            // pendant laquelle elle traine (la source chiffree reste dans
-            // unlock_targets.enc et sera reecrite au prochain besoin).
-            target.deleteKeyFile(context)
-        }
-    }
-
-    LaunchedEffect(output) {
-        scrollState.animateScrollTo(scrollState.maxValue)
     }
 
     fun send() {
         val toSend = input
         input = ""
         lastTypedPassphrase = toSend
-        scope.launch(Dispatchers.IO) { session?.sendInput(toSend + "\n") }
+        scope.launch { doUnlock(toSend) }
     }
 
     /** Deverrouille via le coffre biometrique : rien a taper. */
@@ -147,7 +113,8 @@ fun UnlockTerminalScreen(
                 if (passphrase == null) {
                     status = "Impossible de lire la passphrase"
                 } else {
-                    scope.launch(Dispatchers.IO) { session?.sendInput(passphrase + "\n") }
+                    lastTypedPassphrase = null
+                    scope.launch { doUnlock(passphrase) }
                 }
             },
             onError = { msg -> status = "Biométrie : $msg" }
@@ -186,16 +153,21 @@ fun UnlockTerminalScreen(
                                     UnlockVault.store(context, target.id, cipher, toStore)
                                     saveMessage = "Passphrase enregistrée ✓"
                                     lastTypedPassphrase = null
+                                    onUnlocked()
                                 },
                                 onError = { msg ->
                                     saveMessage = "Non enregistrée : $msg"
                                     lastTypedPassphrase = null
+                                    onUnlocked()
                                 }
                             )
                         } catch (e: Exception) {
                             saveMessage = "Non enregistrée : ${e.message ?: e.javaClass.simpleName}"
                             lastTypedPassphrase = null
+                            onUnlocked()
                         }
+                    } else {
+                        onUnlocked()
                     }
                 }) { Text("Enregistrer") }
             },
@@ -203,6 +175,7 @@ fun UnlockTerminalScreen(
                 TextButton(onClick = {
                     offerSave = false
                     lastTypedPassphrase = null
+                    onUnlocked()
                 }) { Text("Non merci") }
             }
         )
@@ -226,19 +199,21 @@ fun UnlockTerminalScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp)
-                .verticalScroll(scrollState)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
         ) {
             Text(
-                text = output.ifEmpty { "..." },
-                fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodySmall
+                "La passphrase est chiffrée dans ce téléphone (RSA-OAEP) puis envoyée " +
+                "à $machineId via ton tunnel Cloudflare. Elle n'y transite jamais en clair.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         if (UnlockVault.hasPassphrase(context, target.id) && !unlocked) {
             Button(
                 onClick = { sendFromVault() },
+                enabled = !busy,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
@@ -259,6 +234,7 @@ fun UnlockTerminalScreen(
                 modifier = Modifier.weight(1f),
                 label = { Text("Passphrase") },
                 singleLine = true,
+                enabled = !busy && !unlocked,
                 visualTransformation = if (showPassphrase) VisualTransformation.None
                                        else PasswordVisualTransformation(),
                 trailingIcon = {
@@ -273,10 +249,10 @@ fun UnlockTerminalScreen(
                     imeAction = ImeAction.Send,
                     keyboardType = if (showPassphrase) KeyboardType.Text else KeyboardType.Password
                 ),
-                keyboardActions = KeyboardActions(onSend = { send() })
+                keyboardActions = KeyboardActions(onSend = { if (!busy) send() })
             )
             Spacer(Modifier.width(8.dp))
-            Button(onClick = { send() }) {
+            Button(onClick = { send() }, enabled = !busy && !unlocked) {
                 Text("Envoyer")
             }
         }

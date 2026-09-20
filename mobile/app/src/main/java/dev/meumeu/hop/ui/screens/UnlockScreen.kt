@@ -18,7 +18,7 @@ import dev.meumeu.hop.unlock.UnlockTarget
 
 /**
  * Liste des machines que l'utilisateur peut deverrouiller. Tout est configure
- * ici (hostname du tunnel, service token, cle SSH) — rien n'est code en dur,
+ * ici (hostname du tunnel web, service token) — rien n'est code en dur,
  * chaque utilisateur vise ses propres appareils.
  */
 @Composable
@@ -93,8 +93,8 @@ fun UnlockScreen(
                 Text("Aucune machine configurée", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ajoute une machine avec son tunnel Cloudflare, son service token " +
-                    "et sa clé SSH pour la déverrouiller à distance.",
+                    "Ajoute une machine avec son tunnel Cloudflare (web d'unlock) " +
+                    "et son service token pour la déverrouiller à distance.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -214,7 +214,7 @@ fun UnlockScreen(
             title = { Text("Sauvegarder sur ton compte ?") },
             text = {
                 Text(
-                    "Les clés SSH et les service tokens de tes machines seront envoyés, " +
+                    "Les service tokens de tes machines seront envoyés, " +
                     "chiffrés avec la clé dérivée de ton mot de passe hop. Le serveur ne " +
                     "peut pas les déchiffrer, mais ils quittent ce téléphone : choisis un " +
                     "mot de passe solide.\n\nLa passphrase LUKS n'est jamais envoyée " +
@@ -274,7 +274,7 @@ fun UnlockScreen(
             title = { Text("Supprimer ${target.machineId} ?") },
             text = {
                 Text(
-                    "La configuration, la clé SSH et la passphrase enregistrée pour " +
+                    "La configuration et la passphrase enregistrée pour " +
                     "cette machine seront supprimées de ce téléphone.",
                     style = MaterialTheme.typography.bodySmall
                 )

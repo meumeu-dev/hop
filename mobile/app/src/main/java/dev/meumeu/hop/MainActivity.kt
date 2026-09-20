@@ -358,7 +358,6 @@ fun HopApp(
                     },
                     onDelete = { target ->
                         dev.meumeu.hop.unlock.UnlockVault.clear(context, target.id)
-                        target.deleteKeyFile(context)
                         HopConfig(context).removeUnlockTarget(target.id)
                         unlockTargets = HopConfig(context).loadUnlockTargets().toList()
                     }
