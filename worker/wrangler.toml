@@ -2,6 +2,18 @@ name = "hop-pair"
 main = "worker.js"
 compatibility_date = "2024-01-01"
 
+# L'initramfs de megahost appelle le worker via worker.url
+# (https://hop-pair.meumeudev.workers.dev) pour /unlock/trigger : on garde
+# workers.dev actif en plus de la route boot.meumeu.dev.
+workers_dev = true
+
+# Page web de deverrouillage multi-machines : boot.meumeu.dev derriere l'app
+# CF Access `hop-boot` (email OTP). Route resolue par le hostname boot.meumeu.dev
+[[routes]]
+pattern = "boot.meumeu.dev/*"
+# zone meumeu.dev
+zone_name = "meumeu.dev"
+
 [[kv_namespaces]]
 binding = "HOP_KV"
 id = "536adf017eac422a97a74e8ea1a7dcbb"
@@ -25,3 +37,5 @@ deleted_classes = ["UnlockContainer"]
 
 # Secret a definir via `wrangler secret put` (jamais dans ce fichier) :
 #   UNLOCK_HMAC_SECRET_MEGAHOST   — cle HMAC partagee avec l'initramfs de megahost
+#   BOOT_SERVICE_TOKEN_ID         — client id du service token CF Access hop-boot-worker
+#   BOOT_SERVICE_TOKEN_SECRET     — client secret associe

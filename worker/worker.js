@@ -4,6 +4,241 @@
 
 const MAX_SESSIONS_PER_ACCOUNT = 3;
 
+// ==================== WEB UNLOCK — page boot.meumeu.dev ====================
+// Page servie par le worker, protégée par l'app CF Access `hop-boot`
+// (email OTP). Elle liste les machines enregistrées dans la KV
+// `webunlock:machines`, puis proxy /pubkey et /unlock vers le serveur web
+// d'unlock de chaque machine (hostname du tunnel, lui-même derrière une
+// policy CF Access service-token only). La passphrase reste chiffrée de bout
+// en bout dans le navigateur (RSA-OAEP), le worker ne voit qu'un blob.
+
+const HOP_BOOT_AUD = "80f12c81da7cc64966b4095defe2b7481aa805c9ac5b5b55d0f19f158ecefbd";
+
+const BOOT_PAGE_HTML = `
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Déverrouillage LUKS</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --fg: #e6edf3; --muted: #8b949e; --accent: #2f81f7;
+    --ok: #3fb950; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1200px 600px at 50% -10%, #14203a 0%, var(--bg) 60%);
+    color: var(--fg); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 420px; background: var(--card);
+    border: 1px solid var(--border); border-radius: 14px; padding: 28px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  }
+  .lock { font-size: 34px; text-align: center; }
+  h1 { font-size: 18px; margin: 10px 0 2px; text-align: center; font-weight: 600; }
+  .sub { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .machines { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+  .machine {
+    width: 100%; padding: 12px; text-align: left; font-size: 14px;
+    background: #0d1117; color: var(--fg); border: 1px solid var(--border);
+    border-radius: 9px; cursor: pointer;
+  }
+  .machine:hover { border-color: var(--accent); }
+  .machine .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
+  .machine .dot.pending { background: var(--ok); }
+  .machine .dot.down { background: var(--muted); }
+  .machine .meta { float: right; color: var(--muted); font-size: 12px; }
+  .detail { display: none; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .row { position: relative; }
+  input[type=password], input[type=text] {
+    width: 100%; padding: 12px 44px 12px 12px; font-size: 15px;
+    background: #0d1117; border: 1px solid var(--border); border-radius: 9px;
+    color: var(--fg); outline: none; font-family: ui-monospace, monospace;
+  }
+  input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,129,247,.25); }
+  .toggle {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 13px; padding: 6px;
+  }
+  button.primary {
+    width: 100%; margin-top: 16px; padding: 12px; font-size: 15px; font-weight: 600;
+    background: var(--accent); color: #fff; border: 0; border-radius: 9px; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .55; cursor: not-allowed; }
+  .status { margin-top: 16px; font-size: 13px; text-align: center; min-height: 20px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .status.info { color: var(--muted); }
+  .note { margin-top: 18px; font-size: 11.5px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--muted);
+    border-top-color: transparent; border-radius: 50%; animation: r .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="lock">🔒</div>
+    <h1>Déverrouillage LUKS</h1>
+    <div class="sub" id="sub">Choisis une machine.</div>
+    <div class="machines" id="machines"></div>
+    <div class="detail" id="detail">
+      <label for="pass">Passphrase LUKS</label>
+      <div class="row">
+        <input id="pass" type="password" autocomplete="off" autofocus spellcheck="false" enterkeyhint="go">
+        <button type="button" class="toggle" id="toggle" aria-label="Afficher">voir</button>
+      </div>
+      <button type="button" class="primary" id="submit">Déverrouiller</button>
+      <div class="status info" id="status">Chargement…</div>
+    </div>
+    <div class="note">
+      La passphrase est chiffrée dans ton navigateur (RSA-OAEP) avec une clé
+      éphémère de la machine. Cloudflare ne voit qu'un blob chiffré.
+    </div>
+  </div>
+<script>
+(function () {
+  "use strict";
+  var pubKey = null;
+  var current = null;
+  var machinesEl = document.getElementById("machines");
+  var sub = document.getElementById("sub");
+  var detail = document.getElementById("detail");
+  var pass = document.getElementById("pass");
+  var submit = document.getElementById("submit");
+  var status = document.getElementById("status");
+  var toggle = document.getElementById("toggle");
+
+  function setStatus(msg, kind, spin) {
+    status.className = "status " + (kind || "info");
+    status.innerHTML = (spin ? '<span class="spin"></span>' : "") + msg;
+  }
+  function b64ToBuf(b64) {
+    var bin = atob(b64), buf = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf;
+  }
+  function bufToB64(buf) {
+    var bin = "", bytes = new Uint8Array(buf);
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  toggle.addEventListener("click", function () {
+    var show = pass.type === "password";
+    pass.type = show ? "text" : "password";
+    toggle.textContent = show ? "masquer" : "voir";
+    pass.focus();
+  });
+
+  function refresh() {
+    return fetch("machines", { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("status " + r.status); return r.json(); })
+      .then(function (j) {
+        if (!j.ok) throw new Error("resp");
+        machinesEl.innerHTML = "";
+        (j.machines || []).forEach(function (m) {
+          var b = document.createElement("button");
+          b.className = "machine";
+          b.type = "button";
+          var dot = document.createElement("span");
+          dot.className = "dot " + (m.status === "down" ? "down" : "pending");
+          b.appendChild(dot);
+          b.appendChild(document.createTextNode(m.machine_id + " " + (m.hostname || "")));
+          var meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = m.status === "down" ? "offline" : (m.since ? "en boot" : "—");
+          b.appendChild(meta);
+          b.addEventListener("click", function () { select(m); });
+          machinesEl.appendChild(b);
+        });
+        sub.textContent = "Choisis une machine.";
+      })
+      .catch(function (e) {
+        setStatus("Machines indisponibles : " + e.message, "err");
+        setTimeout(refresh, 5000);
+      });
+  }
+
+  function select(m) {
+    current = m;
+    detail.style.display = "block";
+    sub.textContent = "Machine : " + m.machine_id;
+    machinesEl.querySelectorAll(".machine").forEach(function (el) { el.style.borderColor = ""; });
+    loadKey();
+  }
+
+  function loadKey() {
+    pubKey = null;
+    setStatus("Préparation…", "info", true);
+    submit.disabled = true;
+    fetch("pubkey?machine=" + encodeURIComponent(current.machine_id), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("pubkey " + r.status); return r.json(); })
+      .then(function (j) {
+        return crypto.subtle.importKey(
+          "spki", b64ToBuf(j.pubkey),
+          { name: "RSA-OAEP", hash: "SHA-256" }, false, ["encrypt"]);
+      })
+      .then(function (k) {
+        pubKey = k;
+        submit.disabled = false;
+        setStatus("Prêt.", "info");
+      })
+      .catch(function (e) {
+        setStatus("Impossible de contacter la machine. (" + e.message + ")", "err");
+      });
+  }
+
+  submit.addEventListener("click", function () {
+    if (!current) return;
+    if (!pubKey) { loadKey(); return; }
+    var value = pass.value;
+    if (!value) { setStatus("Saisis la passphrase.", "err"); pass.focus(); return; }
+    submit.disabled = true;
+    setStatus("Déverrouillage en cours…", "info", true);
+    var data = new TextEncoder().encode(value);
+    crypto.subtle.encrypt({ name: "RSA-OAEP" }, pubKey, data)
+      .then(function (ct) {
+        return fetch("unlock?machine=" + encodeURIComponent(current.machine_id), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ blob: bufToB64(ct) })
+        });
+      })
+      .then(function (r) { return r.json().then(function (j) { return { r: r, j: j }; }); })
+      .then(function (res) {
+        if (res.j.ok) {
+          setStatus("✓ " + (res.j.msg || "Disque déverrouillé, la machine démarre."), "ok");
+          pass.value = ""; pass.disabled = true; toggle.disabled = true;
+        } else {
+          setStatus("✗ " + (res.j.error || "Échec."), "err");
+          submit.disabled = false;
+          pass.select();
+          if (res.r.status === 400) loadKey();
+        }
+      })
+      .catch(function (e) {
+        setStatus("Erreur réseau : " + e.message, "err");
+        submit.disabled = false;
+      });
+  });
+
+  if (!window.crypto || !crypto.subtle) {
+    sub.textContent = "Pas de WebCrypto (HTTPS requis).";
+  } else {
+    refresh();
+  }
+})();
+</script>
+</body>
+</html>
+`;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -570,6 +805,100 @@ export default {
       return jsonResponse({ ok: true }, 200, cors);
     }
 
+    // ==================== WEB UNLOCK (boot.meumeu.dev) ====================
+    // La page et les API sont exposées uniquement derrière l'app CF Access
+    // `hop-boot` (email OTP) sur boot.meumeu.dev. Les endpoints sensibles
+    // (proxy /pubkey + /unlock) vérifient en plus le JWT d'Access pour ne
+    // jamais accepter une requête venant du hostname workers.dev (non
+    // protégé par Access), qui serait sinon un proxy ouvert vers les machines.
+
+    // GET /machines — liste des machines web-unlock connues + état d'attente
+    if (path === "/machines" && request.method === "GET") {
+      if (!await verifyAccessJwt(request, env)) {
+        return jsonResponse({ error: "unauthorized" }, 401, cors);
+      }
+      const raw = await env.HOP_KV.get("webunlock:machines");
+      const registry = raw ? JSON.parse(raw) : {};
+      const machineIds = Object.keys(registry).filter(isValidMachineId);
+      const out = [];
+      for (const mid of machineIds) {
+        const pendingRaw = await env.HOP_KV.get(`unlock:pending:${mid}`);
+        const pending = pendingRaw ? JSON.parse(pendingRaw) : null;
+        out.push({
+          machine_id: mid,
+          hostname: registry[mid].hostname || "",
+          status: pending && pending.status === "pending" ? "pending" : "down",
+          since: pending ? pending.created : null,
+        });
+      }
+      return jsonResponse({ ok: true, machines: out }, 200, cors);
+    }
+
+    // GET /pubkey?machine=X — proxy vers la clé éphémère du serveur web de la
+    // machine (identifiée par le service token). La réponse est retransmise
+    // telle quelle; on ne limite que la taille (2048-bit => ~450 bytes).
+    if (path === "/pubkey" && request.method === "GET") {
+      if (!await verifyAccessJwt(request, env)) {
+        return jsonResponse({ error: "unauthorized" }, 401, cors);
+      }
+      const machine = url.searchParams.get("machine");
+      if (!isValidMachineId(machine)) return jsonResponse({ error: "invalid machine" }, 400, cors);
+      const backend = await machineBackend(env, machine);
+      if (!backend) return jsonResponse({ error: "unknown machine" }, 404, cors);
+      const upstream = await fetch(`https://${backend.hostname}/pubkey`, {
+        headers: accessTokenHeaders(env),
+      });
+      const body = await upstream.text();
+      return new Response(body, {
+        status: upstream.status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    // POST /unlock?machine=X — proxy du blob chiffré vers la machine
+    if (path === "/unlock" && request.method === "POST") {
+      if (!await verifyAccessJwt(request, env)) {
+        return jsonResponse({ error: "unauthorized" }, 401, cors);
+      }
+      const machine = url.searchParams.get("machine");
+      if (!isValidMachineId(machine)) return jsonResponse({ error: "invalid machine" }, 400, cors);
+      const backend = await machineBackend(env, machine);
+      if (!backend) return jsonResponse({ error: "unknown machine" }, 404, cors);
+
+      let body;
+      try { body = await request.text(); } catch { return jsonResponse({ error: "bad request" }, 400, cors); }
+      if (!body || body.length > 16 << 10) return jsonResponse({ error: "bad request" }, 400, cors);
+
+      const upstream = await fetch(`https://${backend.hostname}/unlock`, {
+        method: "POST",
+        headers: {
+          ...accessTokenHeaders(env),
+          "Content-Type": "application/json",
+        },
+        body: body,
+      });
+      const text = await upstream.text();
+      return new Response(text, {
+        status: upstream.status,
+        headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+      });
+    }
+
+    // GET /boot — la page web de déverrouillage (ne nécessite pas de proxy :
+    // la page elle-même est servie derrière l'app Access hop-boot).
+    if (path === "/boot" && request.method === "GET") {
+      return new Response(BOOT_PAGE_HTML, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Content-Security-Policy":
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+          "X-Content-Type-Options": "nosniff",
+          "Referrer-Policy": "no-referrer",
+        },
+      });
+    }
+
     if (path === "/health") {
       return jsonResponse({ status: "ok", service: "hop-pair" }, 200, cors);
     }
@@ -633,6 +962,78 @@ function isValidMachineId(s) {
 
 function isValidNonce(s) {
   return typeof s === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(s);
+}
+
+// Service token CF Access partagé « hop-boot-worker » : le worker s'identifie
+// auprès des serveurs web d'unlock des machines (policy non_identity +
+// service_token). Env: BOOT_SERVICE_TOKEN_ID / BOOT_SERVICE_TOKEN_SECRET.
+function accessTokenHeaders(env) {
+  return {
+    "Cf-Access-Client-Id": env.BOOT_SERVICE_TOKEN_ID || "",
+    "Cf-Access-Client-Secret": env.BOOT_SERVICE_TOKEN_SECRET || "",
+  };
+}
+
+// Résout le backend web d'une machine depuis la registry KV webunlock:machines
+// = { "<machine_id>": { "hostname": "unlock-web-x.meumeu.dev" } }.
+async function machineBackend(env, machineId) {
+  const raw = await env.HOP_KV.get("webunlock:machines");
+  if (!raw) return null;
+  let registry;
+  try { registry = JSON.parse(raw); } catch { return null; }
+  const entry = registry[machineId];
+  if (!entry || typeof entry.hostname !== "string") return null;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]{1,253}$/.test(entry.hostname)) return null;
+  return entry;
+}
+
+// JWKS du team Access (meumeu-dev.cloudflareaccess.com), mis en cache en KV 1h
+// https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/
+async function getAccessJwks(env) {
+  const cacheKey = "webunlock:jwks";
+  const cached = await env.HOP_KV.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+  const res = await fetch("https://meumeu-dev.cloudflareaccess.com/cdn-cgi/access/certs");
+  if (!res.ok) return null;
+  const jwks = await res.json();
+  await env.HOP_KV.put(cacheKey, JSON.stringify(jwks), { expirationTtl: 3600 });
+  return jwks;
+}
+
+function base64UrlDecode(str) {
+  const b64 = str.replace(/-/g, "+").replace(/_/g, "/").padEnd(str.length + ((4 - (str.length % 4)) % 4), "=");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function verifyAccessJwt(request, env) {
+  try {
+    const token = request.headers.get("Cf-Access-Jwt-Assertion");
+    if (!token) return false;
+    const parts = token.split(".");
+    if (parts.length !== 3) return false;
+    const header = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[0])));
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])));
+
+    // aud de l'app hop-boot (boot.meumeu.dev) + date d'expiration
+    if (payload.aud !== HOP_BOOT_AUD) return false;
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return false;
+
+    const jwks = await getAccessJwks(env);
+    if (!jwks) return false;
+    const key = (jwks.keys || []).find(k => k.kid === header.kid);
+    if (!key) return false;
+
+    const publicKey = await crypto.subtle.importKey(
+      "jwk", { kty: key.kty, n: key.n, e: key.e }, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const signature = base64UrlDecode(parts[2]);
+    const data = new TextEncoder().encode(parts[0] + "." + parts[1]);
+    return await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, data);
+  } catch {
+    return false;
+  }
 }
 
 function hexToBytes(hex) {
