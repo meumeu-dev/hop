@@ -814,7 +814,7 @@ export default {
 
     // GET /machines — liste des machines web-unlock connues + état d'attente
     if (path === "/machines" && request.method === "GET") {
-      if (!await verifyAccessJwt(request, env)) {
+      if (!await isWebUnlockAuthorized(request, env)) {
         return jsonResponse({ error: "unauthorized" }, 401, cors);
       }
       const raw = await env.HOP_KV.get("webunlock:machines");
@@ -838,7 +838,7 @@ export default {
     // machine (identifiée par le service token). La réponse est retransmise
     // telle quelle; on ne limite que la taille (2048-bit => ~450 bytes).
     if (path === "/pubkey" && request.method === "GET") {
-      if (!await verifyAccessJwt(request, env)) {
+      if (!await isWebUnlockAuthorized(request, env)) {
         return jsonResponse({ error: "unauthorized" }, 401, cors);
       }
       const machine = url.searchParams.get("machine");
@@ -857,7 +857,7 @@ export default {
 
     // POST /unlock?machine=X — proxy du blob chiffré vers la machine
     if (path === "/unlock" && request.method === "POST") {
-      if (!await verifyAccessJwt(request, env)) {
+      if (!await isWebUnlockAuthorized(request, env)) {
         return jsonResponse({ error: "unauthorized" }, 401, cors);
       }
       const machine = url.searchParams.get("machine");
@@ -972,6 +972,15 @@ function accessTokenHeaders(env) {
     "Cf-Access-Client-Id": env.BOOT_SERVICE_TOKEN_ID || "",
     "Cf-Access-Client-Secret": env.BOOT_SERVICE_TOKEN_SECRET || "",
   };
+}
+
+// Autorisation des endpoints web-unlock : soit le JWT CF Access (page
+// boot.meumeu.dev), soit un Bearer token de COMPTE hop (app mobile — la
+// session hop est stockee dans le KV et verifiee par authenticateRequest).
+async function isWebUnlockAuthorized(request, env) {
+  if (await verifyAccessJwt(request, env)) return true;
+  const account = await authenticateRequest(request, env);
+  return account !== null;
 }
 
 // Résout le backend web d'une machine depuis la registry KV webunlock:machines

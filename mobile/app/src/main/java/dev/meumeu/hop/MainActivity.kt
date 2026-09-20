@@ -20,10 +20,10 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanIntentResult
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.meumeu.hop.network.UnlockClient
+import dev.meumeu.hop.network.WorkerMachine
 import dev.meumeu.hop.ui.HopViewModel
 import dev.meumeu.hop.ui.screens.*
 import dev.meumeu.hop.ui.theme.HopTheme
-import dev.meumeu.hop.unlock.UnlockTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -69,7 +69,7 @@ sealed class Screen {
     data class Send(val machineName: String) : Screen()
     data class Receive(val machineName: String) : Screen()
     data object Unlock : Screen()
-    data class UnlockTerminal(val target: UnlockTarget) : Screen()
+    data class UnlockTerminal(val machine: WorkerMachine) : Screen()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,102 +84,34 @@ fun HopApp(
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    // Machines configurees par l'utilisateur + leur etat d'attente
-    var unlockTargets by remember { mutableStateOf(HopConfig(context).loadUnlockTargets().toList()) }
+    // Machines decouvertes automatiquement via le Worker (registry
+    // webunlock:machines) + leur etat d'attente. Tout passe par le compte hop.
+    var unlockMachines by remember { mutableStateOf<List<WorkerMachine>>(emptyList()) }
     var unlockChecking by remember { mutableStateOf(false) }
     var unlockStatuses by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var unlockSyncing by remember { mutableStateOf(false) }
-    var unlockSyncMessage by remember { mutableStateOf<String?>(null) }
 
-    // Sauvegarde/restauration de la config d'unlock via le compte hop. Le blob
-    // est chiffre ICI avec la cle derivee du mot de passe (session.dataKey) :
-    // le Worker ne stocke qu'un opaque qu'il ne peut pas lire.
-    fun pushUnlockConfig() {
-        val session = HopConfig(context).loadSession() ?: return
-        unlockSyncing = true
-        unlockSyncMessage = null
-        scope.launch(Dispatchers.IO) {
-            unlockSyncMessage = try {
-                val json = com.google.gson.Gson().toJson(unlockTargets)
-                val encrypted = dev.meumeu.hop.network.AccountClient.encryptData(
-                    json.toByteArray(Charsets.UTF_8), session.dataKey
-                )
-                dev.meumeu.hop.network.AccountClient().pushUnlockConfig(session.token, encrypted)
-                "Sauvegardé (${unlockTargets.size} machine(s))"
-            } catch (e: Exception) {
-                "Échec : ${e.message ?: e.javaClass.simpleName}"
-            }
-            unlockSyncing = false
-        }
-    }
-
-    fun forgetAccountBackup() {
-        val session = HopConfig(context).loadSession() ?: return
-        unlockSyncing = true
-        scope.launch(Dispatchers.IO) {
-            unlockSyncMessage = try {
-                dev.meumeu.hop.network.AccountClient().deleteUnlockConfig(session.token)
-                "Sauvegarde supprimée du compte"
-            } catch (e: Exception) {
-                "Échec : ${e.message ?: e.javaClass.simpleName}"
-            }
-            unlockSyncing = false
-        }
-    }
-
-    fun pullUnlockConfig() {
-        val session = HopConfig(context).loadSession() ?: return
-        unlockSyncing = true
-        unlockSyncMessage = null
-        scope.launch(Dispatchers.IO) {
-            unlockSyncMessage = try {
-                val blob = dev.meumeu.hop.network.AccountClient().pullUnlockConfig(session.token)
-                if (blob.isEmpty()) {
-                    "Aucune sauvegarde sur ce compte"
-                } else {
-                    val decrypted = dev.meumeu.hop.network.AccountClient.decryptData(blob, session.dataKey)
-                    val type = object : com.google.gson.reflect.TypeToken<List<UnlockTarget>>() {}.type
-                    val remote: List<UnlockTarget> =
-                        com.google.gson.Gson().fromJson(String(decrypted, Charsets.UTF_8), type)
-                    // Fusion par id : le distant complete/remplace, on ne perd
-                    // pas les machines locales absentes de la sauvegarde.
-                    val cfg = HopConfig(context)
-                    val merged = cfg.loadUnlockTargets()
-                    for (r in remote) {
-                        val idx = merged.indexOfFirst { it.id == r.id }
-                        if (idx >= 0) merged[idx] = r else merged.add(r)
-                    }
-                    cfg.saveUnlockTargets(merged)
-                    unlockTargets = merged.toList()
-                    "Importé (${remote.size} machine(s))"
-                }
-            } catch (e: Exception) {
-                "Échec : ${e.message ?: e.javaClass.simpleName}"
-            }
-            unlockSyncing = false
-        }
-    }
-
-    fun refreshUnlockStatus() {
+    fun refreshUnlockMachines() {
         val session = HopConfig(context).loadSession()
         if (session == null) {
-            unlockStatuses = unlockTargets.associate {
-                it.machineId to "Connecte-toi à ton compte hop pour voir l'état"
-            }
+            unlockMachines = emptyList()
+            unlockStatuses = emptyMap()
             return
         }
         unlockChecking = true
         scope.launch(Dispatchers.IO) {
-            val results = mutableMapOf<String, String>()
-            for (t in unlockTargets) {
-                results[t.machineId] = try {
-                    val st = UnlockClient().status(session.token, t.machineId)
-                    if (st.pending) "En attente de déverrouillage" else "Aucun déverrouillage en attente"
-                } catch (_: Exception) {
-                    "Impossible de joindre le serveur"
+            try {
+                val machines = UnlockClient().listMachines(session.token)
+                val statuses = machines.associate { m ->
+                    m.machineId to when (m.status) {
+                        "pending" -> "En attente de déverrouillage"
+                        else -> "En attente de boot"
+                    }
                 }
+                unlockMachines = machines
+                unlockStatuses = statuses
+            } catch (e: Exception) {
+                unlockStatuses = emptyMap()
             }
-            unlockStatuses = results
             unlockChecking = false
         }
     }
@@ -260,7 +192,7 @@ fun HopApp(
                         onClick = {
                             selectedTab = 3
                             currentScreen = Screen.Unlock
-                            refreshUnlockStatus()
+                            refreshUnlockMachines()
                         }
                     )
                 }
@@ -335,46 +267,32 @@ fun HopApp(
                 )
 
                 is Screen.Unlock -> UnlockScreen(
-                    targets = unlockTargets,
+                    machines = unlockMachines,
                     statusByMachine = unlockStatuses,
                     isChecking = unlockChecking,
-                    onRefresh = { refreshUnlockStatus() },
-                    onUnlock = { target -> currentScreen = Screen.UnlockTerminal(target) },
-                    onSave = { target ->
-                        HopConfig(context).upsertUnlockTarget(target)
-                        unlockTargets = HopConfig(context).loadUnlockTargets().toList()
-                    },
                     isLoggedIn = state.isLoggedIn,
-                    syncMessage = unlockSyncMessage,
-                    isSyncing = unlockSyncing,
-                    onPushToAccount = { pushUnlockConfig() },
-                    onPullFromAccount = { pullUnlockConfig() },
-                    onForgetAccountBackup = { forgetAccountBackup() },
-                    onImportQR = {
-                        onLaunchQR { content ->
-                            viewModel.onQRCodeScanned(content)
-                            unlockTargets = HopConfig(context).loadUnlockTargets().toList()
-                        }
-                    },
-                    onDelete = { target ->
-                        dev.meumeu.hop.unlock.UnlockVault.clear(context, target.id)
-                        HopConfig(context).removeUnlockTarget(target.id)
-                        unlockTargets = HopConfig(context).loadUnlockTargets().toList()
+                    onRefresh = { refreshUnlockMachines() },
+                    onUnlock = { machine -> currentScreen = Screen.UnlockTerminal(machine) },
+                    onGoToAccount = {
+                        currentScreen = Screen.Account
+                        selectedTab = 2
                     }
                 )
 
                 is Screen.UnlockTerminal -> UnlockTerminalScreen(
-                    target = screen.target,
+                    machine = screen.machine,
+                    accountToken = HopConfig(context).loadSession()?.token.orEmpty(),
                     onUnlocked = {
                         val session = HopConfig(context).loadSession()
                         if (session != null) {
                             scope.launch(Dispatchers.IO) {
-                                try { UnlockClient().clear(session.token, screen.target.machineId) } catch (_: Exception) {}
+                                try { UnlockClient().clear(session.token, screen.machine.machineId) } catch (_: Exception) {}
+                                refreshUnlockMachines()
                             }
                         }
-                        unlockStatuses = unlockStatuses + (screen.target.machineId to "Aucun déverrouillage en attente")
                     },
                     onBack = {
+                        refreshUnlockMachines()
                         currentScreen = Screen.Unlock
                         selectedTab = 3
                     }

@@ -19,25 +19,31 @@ import javax.crypto.spec.OAEPParameterSpec
 import javax.crypto.spec.PSource
 
 /**
- * Deverrouillage via le serveur WEB d'unlock de la machine, a travers le
- * tunnel Cloudflare. Meme protocole que la page web (hop unlock web) :
+ * Deverrouillage via le WEB d'unlock, en deux modes :
  *
+ *  - Mode DIRECT (legacy, avant 2026-09-20) : on parle au serveur web de la
+ *    machine (hostname = ingress du tunnel), auth par service token CF Access.
+ *
+ *  - Mode WORKER (mode courant) : tout passe par le Worker hop-pair, qui
+ *    proxy /pubkey et /unlock vers la bonne machine (registry KV). Auth par
+ *    le Bearer token du COMPTE hop -> l'utilisateur n'a plus rien à
+ *    configurer (ni hostname, ni service token). L'app appelle
+ *    `https://<worker>/pubkey?machine=<id>` et `/unlock?machine=<id>`.
+ *
+ * Protocole commun (page web, mode direct, mode worker) :
  *  1. GET  /pubkey                    -> { alg: "RSA-OAEP-256", pubkey: <DER base64> }
  *  2. chiffrer la passphrase en RSA-OAEP (SHA-256, MGF1=SHA-256) — identique
  *     a WebCrypto et au dechiffrement Go cote serveur
  *  3. POST /unlock { blob: <base64> } -> { ok: true }
  *
- * L'authentification aupres de Cloudflare Access se fait par service token
- * (headers Cf-Access-Client-Id/Secret), sans navigateur ni session.
- *
  * Aucune passphrase ne transite en clair sur le reseau : elle n'existe que
  * dans la memoire du telephone (chiffree ici) et est dechiffree en RAM par la
  * machine. Cloudflare ne voit qu'un blob chiffre.
  */
-class UnlockWebSession(
-    private val hostname: String,
-    private val serviceTokenId: String,
-    private val serviceTokenSecret: String,
+class UnlockWebSession private constructor(
+    private val baseUrl: String,
+    private val machineSuffix: String,
+    private val authHeaders: Map<String, String>,
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -52,6 +58,34 @@ class UnlockWebSession(
         val msg: String,
     )
 
+    /** Mode DIRECT : contacte le serveur web de la machine via son ingress. */
+    companion object {
+        /** Mode DIRECT : contacte le serveur web de la machine via son ingress. */
+        fun direct(
+            hostname: String,
+            serviceTokenId: String,
+            serviceTokenSecret: String,
+        ) = UnlockWebSession(
+            baseUrl = "https://$hostname",
+            machineSuffix = "",
+            authHeaders = mapOf(
+                "Cf-Access-Client-Id" to serviceTokenId,
+                "Cf-Access-Client-Secret" to serviceTokenSecret,
+            )
+        )
+
+        /** Mode WORKER : l'unlock passe par hop-pair, auth = compte hop. */
+        fun viaWorker(
+            workerUrl: String,
+            accountToken: String,
+            machineId: String,
+        ) = UnlockWebSession(
+            baseUrl = workerUrl,
+            machineSuffix = "?machine=$machineId",
+            authHeaders = mapOf("Authorization" to "Bearer $accountToken")
+        )
+    }
+
     /**
      * Effectue un cycle complet d'unlock. Retourne [Result] ou leve une
      * exception ([IOException] reseau, [SecurityException] cle invalide...).
@@ -61,9 +95,8 @@ class UnlockWebSession(
 
         val pubkey: PublicKey = run {
             val req = Request.Builder()
-                .url("https://$hostname/pubkey")
-                .header("Cf-Access-Client-Id", serviceTokenId)
-                .header("Cf-Access-Client-Secret", serviceTokenSecret)
+                .url("$baseUrl/pubkey$machineSuffix")
+                .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
                 .build()
             client.newCall(req).execute().use { res ->
                 if (!res.isSuccessful) throw IOException("pubkey: HTTP ${res.code}")
@@ -95,9 +128,8 @@ class UnlockWebSession(
 
         val payload = JSONObject().put("blob", Base64.getEncoder().encodeToString(blob)).toString()
         val send = Request.Builder()
-            .url("https://$hostname/unlock")
-            .header("Cf-Access-Client-Id", serviceTokenId)
-            .header("Cf-Access-Client-Secret", serviceTokenSecret)
+            .url("$baseUrl/unlock$machineSuffix")
+            .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
             .post(payload.toRequestBody(json))
             .build()
         client.newCall(send).execute().use { res ->

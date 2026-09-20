@@ -18,17 +18,18 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.meumeu.hop.network.WorkerMachine
 import dev.meumeu.hop.unlock.BiometricGate
-import dev.meumeu.hop.unlock.UnlockTarget
 import dev.meumeu.hop.unlock.UnlockVault
 import dev.meumeu.hop.unlock.UnlockWebSession
 import kotlinx.coroutines.launch
 
 /**
- * Deverrouillage via le serveur WEB d'unlock de la machine : la passphrase est
- * chiffree en RSA-OAEP-256 dans le telephone et envoyee en POST /unlock a
- * travers le tunnel Cloudflare (auth service token). Pas de terminal SSH, pas
- * de flux interactif : on envoie, la machine dechiffre, et on affiche la
+ * Deverrouillage via le Worker hop-pair (proxy /pubkey + /unlock vers la
+ * machine), auth par le Bearer token du compte hop : la passphrase est
+ * chiffree en RSA-OAEP-256 dans le telephone et envoyee au worker, qui la
+ * relaye a la machine a travers le tunnel Cloudflare. Pas de terminal SSH,
+ * pas de flux interactif : on envoie, la machine dechiffre, et on affiche la
  * reponse.
  *
  * Aucune passphrase n'est stockee : le texte saisi part directement dans le
@@ -36,11 +37,12 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun UnlockTerminalScreen(
-    target: UnlockTarget,
+    machine: WorkerMachine,
+    accountToken: String,
     onUnlocked: () -> Unit,
     onBack: () -> Unit,
 ) {
-    val machineId = target.machineId
+    val machineId = machine.machineId
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -59,10 +61,10 @@ fun UnlockTerminalScreen(
         if (busy) return
         busy = true
         status = "Déverrouillage en cours…"
-        val session = UnlockWebSession(
-            hostname = target.hostname,
-            serviceTokenId = target.serviceTokenId,
-            serviceTokenSecret = target.serviceTokenSecret,
+        val session = UnlockWebSession.viaWorker(
+            workerUrl = dev.meumeu.hop.network.PairingClient.DEFAULT_WORKER_URL,
+            accountToken = accountToken,
+            machineId = machineId,
         )
         try {
             val result = session.unlock(passphrase)
@@ -72,7 +74,7 @@ fun UnlockTerminalScreen(
                 // Proposer l'enregistrement seulement si la passphrase
                 // vient d'etre tapee a la main et qu'aucun coffre n'existe.
                 if (lastTypedPassphrase != null &&
-                    !UnlockVault.hasPassphrase(context, target.id) &&
+                    !UnlockVault.hasPassphrase(context, machineId) &&
                     BiometricGate.isAvailable(context)
                 ) {
                     offerSave = true
@@ -98,7 +100,7 @@ fun UnlockTerminalScreen(
 
     /** Deverrouille via le coffre biometrique : rien a taper. */
     fun sendFromVault() {
-        val cipher = UnlockVault.decryptCipher(context, target.id)
+        val cipher = UnlockVault.decryptCipher(context, machineId)
         if (cipher == null) {
             status = "Coffre vide ou clé invalidée — saisis la passphrase"
             return
@@ -109,7 +111,7 @@ fun UnlockTerminalScreen(
             title = "Déverrouiller $machineId",
             subtitle = "Confirme avec ton empreinte",
             onSuccess = { unlockedCipher ->
-                val passphrase = UnlockVault.retrieve(context, target.id, unlockedCipher)
+                val passphrase = UnlockVault.retrieve(context, machineId, unlockedCipher)
                 if (passphrase == null) {
                     status = "Impossible de lire la passphrase"
                 } else {
@@ -146,11 +148,11 @@ fun UnlockTerminalScreen(
                         try {
                             BiometricGate.authenticate(
                                 context = context,
-                                cipher = UnlockVault.encryptCipher(target.id),
+                                cipher = UnlockVault.encryptCipher(machineId),
                                 title = "Sceller la passphrase",
                                 subtitle = "Confirme avec ton empreinte",
                                 onSuccess = { cipher ->
-                                    UnlockVault.store(context, target.id, cipher, toStore)
+                                    UnlockVault.store(context, machineId, cipher, toStore)
                                     saveMessage = "Passphrase enregistrée ✓"
                                     lastTypedPassphrase = null
                                     onUnlocked()
@@ -204,13 +206,14 @@ fun UnlockTerminalScreen(
         ) {
             Text(
                 "La passphrase est chiffrée dans ce téléphone (RSA-OAEP) puis envoyée " +
-                "à $machineId via ton tunnel Cloudflare. Elle n'y transite jamais en clair.",
+                "au worker qui la relaye à $machineId via ton tunnel Cloudflare. " +
+                "Elle n'y transite jamais en clair.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        if (UnlockVault.hasPassphrase(context, target.id) && !unlocked) {
+        if (UnlockVault.hasPassphrase(context, machineId) && !unlocked) {
             Button(
                 onClick = { sendFromVault() },
                 enabled = !busy,
